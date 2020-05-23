@@ -88,30 +88,22 @@ static void ROM_SimulatePIFBoot( ECicType cic_chip, u32 Country )
 		   RAMROM_GAME_OFFSET - RAMROM_BOOTSTRAP_OFFSET );
 
 	// Need to copy to SP_IMEM for CIC-6105 boot.
-	u8 * pIMemBase {(u8*)g_pMemoryBuffers[ MEM_SP_MEM ] + 0x1000};
+	u8 * pIMemBase = (u8*)g_pMemoryBuffers[ MEM_SP_MEM ] + 0x1000;
 
-	//FIX ME: Some of these are redundant, see CPU_RomOpen
-	//
-	// gCPUState.CPUControl[C0_SR]		= 0x34000000;	//*SR_FR |*/ SR_ERL | SR_CU2|SR_CU1|SR_CU0;
 	R4300_SetSR(0x34000000);
-	gCPUState.CPUControl[C0_CONFIG]._u32	= 0x0006E463;	// 0x00066463;
-
+	
+	gCPUState.CPUControl[C0_RAND]._u32 = 0x1F;
 	gCPUState.CPUControl[C0_COUNT]._u32 = 0x5000;
+	Memory_MI_SetRegister(MI_VERSION_REG, 0x02020102);
+	Memory_SP_SetRegister(SP_STATUS_REG, SP_STATUS_HALT);
 	gCPUState.CPUControl[C0_CAUSE]._u32 = 0x0000005C;
-	//ENTRYHI_REGISTER	  = 0xFFFFE0FF;
 	gCPUState.CPUControl[C0_CONTEXT]._u32 = 0x007FFFF0;
 	gCPUState.CPUControl[C0_EPC]._u32 = 0xFFFFFFFF;
 	gCPUState.CPUControl[C0_BADVADDR]._u32 = 0xFFFFFFFF;
 	gCPUState.CPUControl[C0_ERROR_EPC]._u32= 0xFFFFFFFF;
 	gCPUState.CPUControl[C0_CONFIG]._u32= 0x0006E463;
-	//
 
 	gGPR[0]._u64=0x0000000000000000LL;
-	gGPR[1]._u64=0x0000000000000000LL;
-	gGPR[2]._u64=0xFFFFFFFFD1731BE9LL;
-	gGPR[3]._u64=0xFFFFFFFFD1731BE9LL;
-	gGPR[4]._u64=0x0000000000001BE9LL;
-	gGPR[5]._u64=0xFFFFFFFFF45231E5LL;
 	gGPR[6]._u64=0xFFFFFFFFA4001F0CLL;
 	gGPR[7]._u64=0xFFFFFFFFA4001F08LL;
 	gGPR[8]._u64=0x00000000000000C0LL;
@@ -122,17 +114,12 @@ static void ROM_SimulatePIFBoot( ECicType cic_chip, u32 Country )
 	gGPR[17]._u64=0x0000000000000000LL;
 	gGPR[18]._u64=0x0000000000000000LL;
 	gGPR[19]._u64=0x0000000000000000LL;
-	gGPR[20]._u64=g_ROM.TvType;
 	gGPR[21]._u64=0x0000000000000000LL;
-	gGPR[23]._u64=0x0000000000000006LL;
-	gGPR[24]._u64=0x0000000000000000LL;
-	gGPR[25]._u64=0xFFFFFFFFD73f2993LL;
 	gGPR[26]._u64=0x0000000000000000LL;
 	gGPR[27]._u64=0x0000000000000000LL;
 	gGPR[28]._u64=0x0000000000000000LL;
 	gGPR[29]._u64=0xFFFFFFFFA4001FF0LL;
 	gGPR[30]._u64=0x0000000000000000LL;
-	gGPR[31]._u64=0xFFFFFFFFA4001554LL;
 
 	switch (Country) {
 		case 0x44: //Germany
@@ -141,8 +128,8 @@ static void ROM_SimulatePIFBoot( ECicType cic_chip, u32 Country )
 		case 0x50: //Europe
 		case 0x53: //Spanish
 		case 0x55: //Australia
-		case 0x58: // ????
-		case 0x59: // X (PAL)
+		case 0x58: // X (PAL)
+		case 0x59: // Y (PAL)
 			switch (cic_chip) {
 				case CIC_6102:
 					gGPR[5]._u64=0xFFFFFFFFC0F1D859LL;
@@ -174,9 +161,9 @@ static void ROM_SimulatePIFBoot( ECicType cic_chip, u32 Country )
 			gGPR[31]._u64=0xFFFFFFFFA4001554LL;
 			break;
 		case 0x37: // 7 (Beta)
-		case 0x41: // ????
-		case 0x45: //USA
-		case 0x4A: //Japan
+		case 0x41: // X (NTSC)
+		case 0x45: // USA
+		case 0x4A: // Japan
 		default:
 			switch (cic_chip) {
 				case CIC_6102:
@@ -352,14 +339,29 @@ void SpecificGameHacks( const ROMHeader & id )
 	case 0x5742: g_ROM.GameHacks = SUPER_BOWLING;		break;
 	case 0x514D: g_ROM.GameHacks = PMARIO;				break;
 	case 0x5632: g_ROM.GameHacks = CHAMELEON_TWIST_2;	break;
-	case 0x4154: g_ROM.GameHacks = TARZAN;				break;
-	case 0x4643: g_ROM.GameHacks = CLAY_FIGHTER_63;		break;
 	case 0x504A: g_ROM.GameHacks = ISS64;				break;
 	case 0x5944: g_ROM.GameHacks = DKR;					break;
 	case 0x3247: g_ROM.GameHacks = EXTREME_G2;			break;
 	case 0x5359: g_ROM.GameHacks = YOSHI;				break;
 	case 0x4C42: g_ROM.GameHacks = BUCK_BUMBLE;			break;
 	case 0x4441: g_ROM.GameHacks = WORMS_ARMAGEDDON;	break;
+	case 0x4F50: g_ROM.GameHacks = POKEMON_STADIUM;		break;
+	case 0x3350: g_ROM.GameHacks = POKEMON_STADIUM;		break; // Pokemon Stadium 2
+	case 0x4B51:	// Quake 64
+		g_ROM.GameHacks = QUAKE;
+		g_ROM.KEEP_MODE_H_HACK = true;
+		break;
+	case 0x5847:	// Gauntlet Legends
+	case 0x3251:	// Quake II
+		g_ROM.KEEP_MODE_H_HACK = true;
+		break;
+	case 0x4643:	// Clay Fighter 63
+		g_ROM.SKIP_MSG_SEND_HACK = true;
+		break;
+	case 0x4154:    // Tarzan
+		g_ROM.SCISSOR_HACK = true;
+		g_ROM.GameHacks = TARZAN;
+		break;
 	case 0x464A:	// Jet Force Geminy
 	case 0x5647:	// Glover
 		g_ROM.SET_ROUND_MODE = true;
@@ -380,7 +382,7 @@ void SpecificGameHacks( const ROMHeader & id )
 		g_ROM.DISABLE_SIM_CVT_D_S = true;
 		break;
 	case 0x4A54:	//Tom and Jerry
-	case 0x4d4a:	//Earthworm Jim
+	case 0x4D4A:	//Earthworm Jim
 	case 0x5150:	//PowerPuff Girls
 		g_ROM.DISABLE_SIM_CVT_D_S = true;
 		g_ROM.LOAD_T1_HACK = true;
@@ -390,6 +392,7 @@ void SpecificGameHacks( const ROMHeader & id )
 		g_ROM.SET_ROUND_MODE = true;
 		g_ROM.LOAD_T1_HACK = true;
 		g_ROM.T1_HACK = true;
+		g_ROM.T0_SKIP_HACK = true;
 		break;
 	case 0x3358:	//GEX3
 	case 0x3258:	//GEX64
@@ -397,6 +400,7 @@ void SpecificGameHacks( const ROMHeader & id )
 		break;
 	case 0x4c5a:	//ZELDA_OOT
 		g_ROM.ZELDA_HACK = true;
+		g_ROM.SKIP_MSG_SEND_HACK = true;
 		g_ROM.GameHacks = ZELDA_OOT;
 		break;
 	case 0x4F44:	//DK64
@@ -411,6 +415,9 @@ void SpecificGameHacks( const ROMHeader & id )
 	case 0x5653:	//SSV
 		g_ROM.LOAD_T1_HACK = true;
 		g_ROM.TLUT_HACK = true;
+		break;
+	case 0x5546:	//Conker's Bad Fur Day
+		g_ROM.SKIP_CPU_REND_HACK = true;
 		break;
 	case 0x5547:	//Sin and punishment
 		g_ROM.TLUT_HACK = true;
@@ -429,17 +436,19 @@ void SpecificGameHacks( const ROMHeader & id )
 	case 0x534E:	//Beetle Racing
 		g_ROM.TLUT_HACK = true;
 		break;
-	case 0x4641:	//Animal crossing
+	case 0x4641:	//Animal Crossing
 		g_ROM.TLUT_HACK = true;
-		g_ROM.GameHacks = ANIMAL_CROSSING;
+		g_ROM.SKIP_MSG_SEND_HACK = true;
 		break;
 	case 0x4842:	//Body Harvest
 	case 0x434E:	//Nightmare Creatures
 	case 0x5543:	//Cruisn' USA
 		g_ROM.GameHacks = BODY_HARVEST;
 		break;
-	case 0x594D:    // Mortal Kombat Mythologies: Sub-Zero
-		g_ROM.PROJ_HACK = true;
+	case 0x5453:    //Eiko no Saint Andrews
+	case 0x4646:    //Fighting Force 64
+		g_ROM.SCISSOR_HACK = true;
+		break;
 	default:
 		break;
 	}

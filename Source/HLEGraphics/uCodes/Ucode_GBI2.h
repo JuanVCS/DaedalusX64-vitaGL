@@ -340,9 +340,9 @@ void DLParser_GBI2_MoveMem( MicroCodeCommand command )
 		break;
 
 	default:
-	#ifdef DAEDALUS_DEBUG_DISPLAYLIST
+#ifdef DAEDALUS_DEBUG_DISPLAYLIST
 		DBGConsole_Msg(0, "GBI2 MoveMem: Unknown Type. 0x%08x 0x%08x", command.inst.cmd0, command.inst.cmd1);
-		#endif
+#endif
 		break;
 	}
 }
@@ -393,7 +393,8 @@ void DLParser_GBI2_GeometryMode( MicroCodeCommand command )
 	DL_PF("    PointLight %s", (gGeometryMode.GBI2_PointLight) ? "On" : "Off");
 #endif
 	TnLMode TnL;
-
+	TnL._u32 = 0;
+	
 	TnL.Light		= gGeometryMode.GBI2_Lighting;
 	TnL.TexGen		= gGeometryMode.GBI2_TexGen;
 	TnL.TexGenLin	= gGeometryMode.GBI2_TexGenLin;

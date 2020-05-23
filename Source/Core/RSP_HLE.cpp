@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "Interrupt.h"
 #include "Memory.h"
+#include "Core/ROM.h"
 #include "Debug/DBGConsole.h"
 #include "Debug/DebugLog.h"
 #include "Debug/Dump.h"			// For Dump_GetDumpDirectory()
@@ -37,8 +38,21 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "Utility/PrintOpCode.h"
 #include "Utility/Profiler.h"
 
-static const bool	gGraphicsEnabled {true};
-static const bool	gAudioEnabled	 {true};
+static const bool	gGraphicsEnabled = true;
+static const bool	gAudioEnabled	 = true;
+
+/* JpegTask.cpp */
+extern void jpeg_decode_PS(OSTask *task);
+extern void jpeg_decode_PS0(OSTask *task);
+extern void jpeg_decode_OB(OSTask *task);
+
+/* RE2Task.cpp + HqvmTask.cpp */
+extern "C" {
+	extern void resize_bilinear_task(OSTask *task);
+	extern void decode_video_frame_task(OSTask *task);
+	extern void fill_video_double_buffer_task(OSTask *task);
+	extern void hvqm2_decode_sp1_task(OSTask *task);
+};
 
 #ifdef DAEDALUS_DEBUG_CONSOLE
 #if 0
@@ -187,7 +201,7 @@ static EProcessResult RSP_HLE_Audio()
 // RSP_HLE_Jpeg and RSP_HLE_CICX105 were borrowed from Mupen64plus
 static u32 sum_bytes(const u8 *bytes, u32 size)
 {
-    u32 sum {};
+    u32 sum = 0;
     const u8 * const bytes_end = bytes + size;
 
     while (bytes != bytes_end)
@@ -196,26 +210,23 @@ static u32 sum_bytes(const u8 *bytes, u32 size)
     return sum;
 }
 
-
-
 EProcessResult RSP_HLE_Jpeg(OSTask * task)
 {
-void jpeg_decode_PS(OSTask *task);
-void jpeg_decode_OB(OSTask *task);
-
 	// most ucode_boot procedure copy 0xf80 bytes of ucode whatever the ucode_size is.
 	// For practical purpose we use a ucode_size = min(0xf80, task->ucode_size)
-	u32 sum {sum_bytes(g_pu8RamBase + (u32)task->t.ucode , Min<u32>(task->t.ucode_size, 0xf80) >> 1)};
+	u32 sum = sum_bytes(g_pu8RamBase + (u32)task->t.ucode , Min<u32>(task->t.ucode_size, 0xf80) >> 1);
 
 	//DBGConsole_Msg(0, "JPEG Task: Sum=0x%08x", sum);
 	switch(sum)
 	{
+	case 0x2c85a: // Pokemon Stadium Jap Exclusive jpg decompression
+		jpeg_decode_PS0(task);
+		break;
 	case 0x2caa6: // Zelda OOT, Pokemon Stadium {1,2} jpg decompression
 		jpeg_decode_PS(task);
 		break;
-		 // Ogre Battle & Buttom of the 9th background decompression
-		case 0x130de:
-		case 0x278b0:
+	case 0x130de: // Ogre Battle & Buttom of the 9th background decompression
+	case 0x278b0:
         jpeg_decode_OB(task);
 		break;
 	}
@@ -223,11 +234,9 @@ void jpeg_decode_OB(OSTask *task);
 	return PR_COMPLETED;
 }
 
-
-
 EProcessResult RSP_HLE_CICX105(OSTask * task)
 {
-    const u32 sum {sum_bytes(g_pu8SpImemBase, 0x1000 >> 1)};
+    const u32 sum = sum_bytes(g_pu8SpImemBase, 0x1000 >> 1);
 
     switch(sum)
     {
@@ -236,8 +245,8 @@ EProcessResult RSP_HLE_CICX105(OSTask * task)
         case 0x9f2: /* CIC 7105 */
 			{
 				u32 i;
-				u8 * dst {g_pu8RamBase + 0x2fb1f0};
-				u8 * src {g_pu8SpImemBase + 0x120};
+				u8 * dst = g_pu8RamBase + 0x2fb1f0;
+				u8 * src = g_pu8SpImemBase + 0x120;
 
 				/* dma_read(0x1120, 0x1e8, 0x1e8) */
 				memcpy(g_pu8SpImemBase + 0x120, g_pu8RamBase + 0x1e8, 0x1f0);
@@ -258,9 +267,37 @@ EProcessResult RSP_HLE_CICX105(OSTask * task)
 	return PR_COMPLETED;
 }
 
+EProcessResult RSP_HLE_RE2(OSTask * task)
+{
+	u32 sum = sum_bytes(g_pu8RamBase + (u32)task->t.ucode, 256);
+
+	switch(sum)
+	{
+	case 0x450f:
+		resize_bilinear_task(task);
+		break;
+	case 0x3b44:
+		decode_video_frame_task(task);
+		break;
+	case 0x3d84:
+        fill_video_double_buffer_task(task);
+		break;
+	default:
+		DBGConsole_Msg(0, "Unhandled RSP RE2 Task: 0x%04X", sum );
+		break;
+	}
+
+	return PR_COMPLETED;
+}
+
+EProcessResult RSP_HLE_Hvqm(OSTask * task)
+{
+	hvqm2_decode_sp1_task(task);
+	return PR_COMPLETED;
+}
 
 void RSP_HLE_ProcessTask()
-{
+{	
 	OSTask * pTask = (OSTask *)(g_pu8SpMemBase + 0x0FC0);
 
 	EProcessResult	result( PR_NOT_STARTED );
@@ -278,37 +315,31 @@ void RSP_HLE_ProcessTask()
 		case M_GFXTASK:
 			// frozen task
 			if(Memory_DPC_GetRegister(DPC_STATUS_REG) & DPC_STATUS_FREEZE)
-			{
 				return;
+			
+			if (pTask->t.data_ptr == NULL) {
+				result = RSP_HLE_RE2(pTask);
+			} else if (g_ROM.rh.CartID == 0x4B59) { // Yakouchuu II - Satsujin Kouro
+				u32 sum = sum_bytes(g_pu8RamBase + (u32)pTask->t.ucode, 1488);
+				if (sum == 0x19495) result = RSP_HLE_Hvqm(pTask);
+				else result = RSP_HLE_Graphics();
+			} else {
+				result = RSP_HLE_Graphics();
 			}
-			result = RSP_HLE_Graphics();
 			break;
-
 		case M_AUDTASK:
 			result = RSP_HLE_Audio();
 			break;
-
-		case M_VIDTASK:
-			// Can't handle
-			break;
-
 		case M_JPGTASK:
 			result = RSP_HLE_Jpeg(pTask);
 			break;
-		#ifdef DAEDALUS_ENABLE_ASSERTS
-		default:
-
-			// This can be easily handled, need to find first a game that uses this though
-			DAEDALUS_ASSERT( pTask->t.type != M_FBTASK, "FB task is not handled");
-
-			// Can't handle
-			DBGConsole_Msg(0, "Unknown task: %08x", pTask->t.type );
-			//	RSP_HLE_DumpTaskInfo( pTask );
-			//	RDP_DumpRSPCode("boot",    0xDEAFF00D, (u32*)(g_pu8RamBase + (((u32)pTask->t.ucode_boot)&0x00FFFFFF)), 0x04001000, pTask->t.ucode_boot_size);
-			//	RDP_DumpRSPCode("unkcode", 0xDEAFF00D, (u32*)(g_pu8RamBase + (((u32)pTask->t.ucode)&0x00FFFFFF)),      0x04001080, 0x1000 - 0x80);//pTask->t.ucode_size);
-
+		case M_FBTASK:
+			result = RSP_HLE_Hvqm(pTask);
 			break;
-			#endif
+		default:
+			result = PR_COMPLETED;
+			DBGConsole_Msg(0, "Unknown task: %08x", pTask->t.type );
+			break;
 	}
 
 	// Started and completed. No need to change cores. [synchronously]

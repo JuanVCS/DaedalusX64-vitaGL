@@ -86,12 +86,12 @@ void DLParser_Sprite2DDraw( MicroCodeCommand command, const Sprite2DInfo &info, 
 
 	ti.SetWidth            (sprite->width);
 	ti.SetHeight           (sprite->height);
-	ti.SetPitch            (sprite->stride << sprite->size >> 1);
+	ti.SetPitch            ((sprite->stride << sprite->size) >> 1);
 
 	ti.SetSwapped          (0);
 
 	ti.SetPalette		   (0);
-	ti.SetTlutAddress      ((u32)(g_pu8RamBase + RDPSegAddr(sprite->tlut)));
+	ti.SetTlutAddress      (RDPSegAddr(sprite->tlut));
 
 	ti.SetTLutFormat       (kTT_RGBA16);
 

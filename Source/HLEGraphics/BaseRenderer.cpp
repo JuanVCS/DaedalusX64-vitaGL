@@ -51,11 +51,16 @@ struct ScePspFMatrix4
 	float m[16];
 };
 
+extern float *gVertexBuffer;
+extern uint32_t *gColorBuffer;
+extern float *gTexCoordBuffer;
+
 #include <vitaGL.h>
 extern void sceGuSetMatrix(int type, const ScePspFMatrix4 * mtx);
 #define GU_PROJECTION GL_PROJECTION
 #endif
 
+#ifndef DAEDALUS_VITA
 // Vertex allocation.
 // AllocVerts/FreeVerts:
 //   Allocate vertices whose lifetime must extend beyond the current scope.
@@ -71,7 +76,7 @@ struct TempVerts
 
 	~TempVerts()
 	{
-#if defined(DAEDALUS_GL) || defined(DAEDALUS_VITA)
+#if defined(DAEDALUS_GL)
 		free(Verts);
 #endif
 	}
@@ -82,7 +87,7 @@ struct TempVerts
 #ifdef DAEDALUS_PSP
 		Verts = static_cast<DaedalusVtx*>(sceGuGetMemory(bytes));
 #endif
-#if defined(DAEDALUS_GL) || defined(DAEDALUS_VITA)
+#if defined(DAEDALUS_GL)
 		Verts = static_cast<DaedalusVtx*>(malloc(bytes));
 #endif
 
@@ -93,9 +98,7 @@ struct TempVerts
 	DaedalusVtx *	Verts;
 	u32				Count {};
 };
-
-
-
+#endif
 
 extern "C"
 {
@@ -112,8 +115,10 @@ void	_ConvertVerticesIndexed( DaedalusVtx * dest, const DaedalusVtx4 * source, u
 u32		_ClipToHyperPlane( DaedalusVtx4 * dest, const DaedalusVtx4 * source, const v4 * plane, u32 num_verts );
 }
 
+#ifndef GL_TRUE
 #define GL_TRUE                           1
 #define GL_FALSE                          0
+#endif
 
 #undef min
 #undef max
@@ -121,22 +126,20 @@ u32		_ClipToHyperPlane( DaedalusVtx4 * dest, const DaedalusVtx4 * source, const 
 extern bool gRumblePakActive;
 extern u32 gAuxAddr;
 
-static f32 fViWidth {320.0f};
-static f32 fViHeight {240.0f};
-static f32 oldfViWidth {320.0f};
-static f32 oldfViHeight {240.0f};
-u32 uViWidth {320};
-u32 uViHeight {240};
+static f32 fViWidth = 320.0f;
+static f32 fViHeight = 240.0f;
+static f32 oldfViWidth = 320.0f;
+static f32 oldfViHeight = 240.0f;
+u32 uViWidth = 320;
+u32 uViHeight = 240;
 
-f32 gZoomX{1.0};	//Default is 1.0f
+f32 gZoomX = 1.0;	//Default is 1.0f
 
 #ifdef DAEDALUS_DEBUG_DISPLAYLIST
 // General purpose variable used for debugging
-f32 TEST_VARX {0.0f};
-f32 TEST_VARY {0.0f};
+f32 TEST_VARX = 0.0f;
+f32 TEST_VARY = 0.0f;
 #endif
-
-
 
 //
 
@@ -186,13 +189,11 @@ BaseRenderer::BaseRenderer()
 		mActiveTile[i] = 0;
 	}
 
-
+	memset(&mTnL, 0, sizeof(mTnL) );
 	mTnL.Flags._u32 = 0;
 	mTnL.NumLights = 0;
 	mTnL.TextureScaleX = 1.0f;
 	mTnL.TextureScaleY = 1.0f;
-
-	memset( mTnL.Lights, 0, sizeof(mTnL.Lights) );
 }
 
 
@@ -203,42 +204,44 @@ BaseRenderer::~BaseRenderer() {}
 
 void BaseRenderer::SetVIScales()
 {
-	u32 width {Memory_VI_GetRegister( VI_WIDTH_REG )};
+	u32 width = Memory_VI_GetRegister( VI_WIDTH_REG );
 
-	u32 ScaleX {Memory_VI_GetRegister( VI_X_SCALE_REG ) & 0xFFF};
-	u32 ScaleY {Memory_VI_GetRegister( VI_Y_SCALE_REG ) & 0xFFF};
+	u32 ScaleX = Memory_VI_GetRegister( VI_X_SCALE_REG ) & 0xFFF;
+	u32 ScaleY = Memory_VI_GetRegister( VI_Y_SCALE_REG ) & 0xFFF;
 
-	f32 fScaleX {(f32)ScaleX / 1024.0f};
-	f32 fScaleY {(f32)ScaleY / 2048.0f};
+	f32 fScaleX = (f32)ScaleX / 1024.0f;
+	f32 fScaleY = (f32)ScaleY / 2048.0f;
 
-	u32 HStartReg {Memory_VI_GetRegister( VI_H_START_REG )};
-	u32 VStartReg {Memory_VI_GetRegister( VI_V_START_REG )};
+	u32 HStartReg = Memory_VI_GetRegister( VI_H_START_REG );
+	u32 VStartReg = Memory_VI_GetRegister( VI_V_START_REG );
 
-	u32	hstart {HStartReg >> 16};
-	u32	hend {HStartReg & 0xffff};
+	u32	hstart = HStartReg >> 16;
+	u32	hend = HStartReg & 0xffff;
 
-	u32	vstart {VStartReg >> 16};
-	u32	vend {VStartReg & 0xffff};
+	u32	vstart = VStartReg >> 16;
+	u32	vend = VStartReg & 0xffff;
 
 	// Sometimes HStartReg can be zero.. ex PD, Lode Runner, Cyber Tiger
 	if (hend == hstart)
 	{
-		hend = (u32)(width / fScaleX);
+		hend = (u32)((f32)width / fScaleX);
 	}
 
-	fViWidth  =  (hend-hstart) * fScaleX;
-	fViHeight =  (vend-vstart) * fScaleY * (240.f/237.f);
-
-	// XXX Need to check PAL games.
-	//if(g_ROM.TvType != OS_TV_NTSC) sRatio = 9/11.0f;
+	fViWidth  =  (f32)(hend-hstart) * fScaleX;
+	bool isPAL = (Memory_VI_GetRegister( VI_V_SYNC_REG ) & 0x3FFF) > 550;
+	fViHeight =  (f32)(vend-vstart) * fScaleY * (isPAL ? 1.0041841f : 1.0126582f);
 
 	//printf("width[%d] ViWidth[%f] ViHeight[%f]\n", width, fViWidth, fViHeight);
 
 	//This corrects height in various games ex : Megaman 64, Cyber Tiger. 40Winks need width >= ((u32)fViWidth << 1) for menus //Corn
-	if( width > 0x300 || width >= ((u32)fViWidth << 1) )
+	if( (width > 768) || (width >= ((u32)fViWidth << 1)) )
 	{
 		fViHeight += fViHeight;
 	}
+	
+	// Avoid a divide by zero in the viewport code.
+	if (fViWidth == 0.0f) fViWidth = 320.0f;
+	if (fViHeight == 0.0f) fViHeight = 240.0f;
 
 	//Used to set a limit on Scissors //Corn
 	uViWidth  = (u32)fViWidth - 1;
@@ -286,7 +289,7 @@ void BaseRenderer::EndScene()
 
 	//
 	//	Clear this, to ensure we're force to check for updates to it on the next frame
-	for( u32 i {}; i < kNumBoundTextures; i++ )
+	for( u32 i = 0; i < kNumBoundTextures; i++ )
 	{
 		mBoundTextureInfo[ i ] = TextureInfo();
 		mBoundTexture[ i ]     = nullptr;
@@ -296,11 +299,83 @@ void BaseRenderer::EndScene()
 
 //
 
+void BaseRenderer::ForceViewport(float w, float h)
+{
+	fViWidth = w;
+	fViHeight = h;
+	mVpScale = v2(w / 2, h / 2);
+	mVpTrans = v2(w / 2, h / 2);
+	
+	// Get the current display dimensions. This might change frame by frame e.g. if the window is resized.
+	u32 display_width  = 0, display_height = 0;
+	CGraphicsContext::Get()->ViewportType(&display_width, &display_height);
+	
+	if (mScreenWidth != display_width || mScreenHeight != display_height ||
+		oldfViWidth != fViWidth || oldfViHeight != fViHeight ){
+		
+		mScreenWidth  = (f32)display_width;
+		mScreenHeight = (f32)display_height;
+		oldfViWidth = fViWidth;
+		oldfViHeight = fViHeight;
+
+#ifdef DAEDALUS_PSP
+		// Centralise the viewport in the display.
+		u32 frame_width  = (u32)(gGlobalPreferences.TVEnable ? 720 : 480);
+		u32 frame_height = (u32)(gGlobalPreferences.TVEnable ? 480 : 272);
+
+		f32 display_x = (frame_width  - (f32)display_width)  / 2.0f;
+		f32 display_y = (frame_height - (f32)display_height) / 2.0f;
+#elif defined(DAEDALUS_VITA)
+		// Centralise the viewport in the display.
+		u32 frame_width  = SCR_WIDTH;
+		u32 frame_height = SCR_HEIGHT;
+
+		f32 display_x = (frame_width  - (f32)display_width)  / 2.0f;
+		f32 display_y = (frame_height - (f32)display_height) / 2.0f;
+#else
+		f32 display_x = 0, display_y = 0;
+#endif
+
+		mN64ToScreenScale.x = gZoomX * (mScreenWidth  / fViWidth);
+		mN64ToScreenScale.y = gZoomX * (mScreenHeight / fViHeight);
+
+		mN64ToScreenTranslate.x  = display_x - roundf(0.55f * (gZoomX - 1.0f) * fViWidth);
+		mN64ToScreenTranslate.y  = display_y - roundf(0.55f * (gZoomX - 1.0f) * fViHeight);
+
+#ifndef DAEDALUS_VITA
+		if (gRumblePakActive)
+		{
+			mN64ToScreenTranslate.x += (FastRand() & 3);
+			mN64ToScreenTranslate.y += (FastRand() & 3);
+		}
+#endif
+
+#if defined(DAEDALUS_GL) || defined(DAEDALUS_VITA)
+		f32 w = mScreenWidth;
+		f32 h = mScreenHeight;
+
+		mScreenToDevice = Matrix4x4(
+			2.f / w,       0.f,     0.f,     0.f,
+				0.f,  -2.f / h,     0.f,     0.f,
+				0.f,       0.f,     1.f,     0.f,
+			  -1.0f,       1.f,     0.f,     1.f
+		);
+#endif
+	}
+	
+	UpdateViewport();
+}
+
 void BaseRenderer::InitViewport()
 {
 	// Init the N64 viewport.
-	mVpScale = v2( 640.f*0.25f, 480.f*0.25f );
-	mVpTrans = v2( 640.f*0.25f, 480.f*0.25f );
+	if (gRDPFrame == 0) {
+		mVpScale = v2( 320.0f, 240.0f );
+		mVpTrans = v2( 320.0f, 240.0f );
+		fViWidth = 640.0f;
+		fViHeight = 480.0f;
+	}else 
+	SetVIScales();
 
 	// Get the current display dimensions. This might change frame by frame e.g. if the window is resized.
 	u32 display_width  = 0, display_height = 0;
@@ -323,24 +398,24 @@ void BaseRenderer::InitViewport()
 		u32 frame_width  = (u32)(gGlobalPreferences.TVEnable ? 720 : 480);
 		u32 frame_height = (u32)(gGlobalPreferences.TVEnable ? 480 : 272);
 
-		s32 display_x = (s32)(frame_width  - display_width)  / 2;
-		s32 display_y = (s32)(frame_height - display_height) / 2;
+		f32 display_x = (frame_width  - (f32)display_width)  / 2.0f;
+		f32 display_y = (frame_height - (f32)display_height) / 2.0f;
 #elif defined(DAEDALUS_VITA)
 		// Centralise the viewport in the display.
 		u32 frame_width  = SCR_WIDTH;
 		u32 frame_height = SCR_HEIGHT;
 
-		s32 display_x = (s32)(frame_width  - display_width)  / 2;
-		s32 display_y = (s32)(frame_height - display_height) / 2;
+		f32 display_x = (frame_width  - (f32)display_width)  / 2.0f;
+		f32 display_y = (frame_height - (f32)display_height) / 2.0f;
 #else
-		s32 display_x = 0, display_y = 0;
+		f32 display_x = 0, display_y = 0;
 #endif
 
-		mN64ToScreenScale.x = gZoomX * mScreenWidth  / fViWidth;
-		mN64ToScreenScale.y = gZoomX * mScreenHeight / fViHeight;
+		mN64ToScreenScale.x = gZoomX * (mScreenWidth  / fViWidth);
+		mN64ToScreenScale.y = gZoomX * (mScreenHeight / fViHeight);
 
-		mN64ToScreenTranslate.x  = (f32)display_x - roundf(0.55f * (gZoomX - 1.0f) * fViWidth);
-		mN64ToScreenTranslate.y  = (f32)display_y - roundf(0.55f * (gZoomX - 1.0f) * fViHeight);
+		mN64ToScreenTranslate.x  = display_x - roundf(0.55f * (gZoomX - 1.0f) * fViWidth);
+		mN64ToScreenTranslate.y  = display_y - roundf(0.55f * (gZoomX - 1.0f) * fViHeight);
 
 #ifndef DAEDALUS_VITA
 		if (gRumblePakActive)
@@ -358,7 +433,7 @@ void BaseRenderer::InitViewport()
 			2.f / w,       0.f,     0.f,     0.f,
 				0.f,  -2.f / h,     0.f,     0.f,
 				0.f,       0.f,     1.f,     0.f,
-			-1.0f,       1.f,     0.f,     1.f
+			  -1.0f,       1.f,     0.f,     1.f
 		);
 #endif
 	}
@@ -383,36 +458,31 @@ void BaseRenderer::SetN64Viewport( const v2 & scale, const v2 & trans )
 	mVpTrans.x = trans.x;
 	mVpTrans.y = trans.y;
 
-	UpdateViewport();
+	InitViewport();
 }
 
 
 //
+s32 vp_x;
+s32 vp_y;
+s32 vp_w;
+s32 vp_h;
+bool is_negative_w = false;
+bool is_negative_h = false;
+bool is_negative_x = false;
+bool is_negative_y = false;
 
-void BaseRenderer::UpdateViewport()
-{
-	v2		n64_min( mVpTrans.x - mVpScale.x, mVpTrans.y - mVpScale.y );
-	v2		n64_max( mVpTrans.x + mVpScale.x, mVpTrans.y + mVpScale.y );
-
-	v2		psp_min {};
-	v2		psp_max {};
-	ConvertN64ToScreen( n64_min, psp_min );
-	ConvertN64ToScreen( n64_max, psp_max );
-
-	s32		vp_x {s32( psp_min.x )};
-	s32		vp_y {s32( psp_min.y )};
-	s32		vp_w {s32( psp_max.x - psp_min.x )};
-	s32		vp_h {s32( psp_max.y - psp_min.y )};
-
-	//DBGConsole_Msg(0, "[WViewport Changed (%d) (%d)]",vp_w,vp_h );
-
+void inline SetInternalViewport() {
+	//DBGConsole_Msg(0, "InternalViewport: %ld, %ld, %ld, %ld", vp_x, vp_y, vp_w, vp_h);
 #ifdef DAEDALUS_PSP
-	const u32 vx {2048};
-	const u32 vy {2048};
+	const u32 vx = 2048;
+	const u32 vy = 2048;
 
 	sceGuOffset(vx - (vp_w/2),vy - (vp_h/2));
 	sceGuViewport(vx + vp_x, vy + vp_y, vp_w, vp_h);
 #elif defined(DAEDALUS_VITA)
+	// NOTE: If disabled, Tarzan in game HUD is not rendered and Fighting Force 64 floor is not rendered
+	if (!g_ROM.SCISSOR_HACK) glScissor(vp_x, SCR_HEIGHT - (vp_h + vp_y), vp_w, vp_h);
 	glViewport(vp_x, SCR_HEIGHT - (vp_h + vp_y), vp_w, vp_h);
 #elif defined(DAEDALUS_GL)
 	glViewport(vp_x, (s32)mScreenHeight - (vp_h + vp_y), vp_w, vp_h);
@@ -423,6 +493,84 @@ void BaseRenderer::UpdateViewport()
 #endif
 }
 
+void BaseRenderer::UpdateViewport()
+{
+	//DBGConsole_Msg(0, "UpdateViewport: trans (%f, %f), scale(%f, %f)", mVpTrans.x, mVpTrans.y, mVpScale.x, mVpScale.y);
+	v2		n64_min( mVpTrans.x - mVpScale.x, mVpTrans.y - mVpScale.y );
+	v2		n64_max( mVpTrans.x + mVpScale.x, mVpTrans.y + mVpScale.y );
+
+	v2		psp_min;
+	v2		psp_max;
+	
+	ConvertN64ToScreen( n64_min, psp_min );
+	ConvertN64ToScreen( n64_max, psp_max );
+
+	vp_x = s32( psp_min.x );
+	vp_y = s32( psp_min.y );
+	vp_w = s32( psp_max.x - psp_min.x );
+	vp_h = s32( psp_max.y - psp_min.y );
+	
+	is_negative_x = is_negative_y = is_negative_w = is_negative_h = false;
+	SetInternalViewport();
+}
+
+#ifdef DAEDALUS_VITA
+void BaseRenderer::SetNegativeViewport()
+{
+	if ((vp_w < 0) || (vp_h < 0) || (vp_x < 0) || (vp_y < 0)) {
+		//DBGConsole_Msg(0, "PreNegativeViewport: %ld, %ld, %ld, %ld", vp_x, vp_y, vp_w, vp_h);
+		if (vp_x < 0) {
+			vp_w += vp_x;
+			vp_x -= vp_x;
+			is_negative_x = true;
+		}
+		if (vp_y < 0) {
+			vp_h += vp_y;
+			vp_y -= vp_y;
+			is_negative_y = true;
+		}
+		if (vp_w < 0) { 
+			vp_w = -vp_w;
+			vp_x = vp_x - vp_w;
+			is_negative_w = true;
+		}
+		if (vp_h < 0) {
+			vp_h = -vp_h;
+			vp_y = vp_y - vp_h;
+			is_negative_h = true;
+		}
+		SetInternalViewport();
+	}
+}
+
+void BaseRenderer::SetPositiveViewport()
+{
+	if (is_negative_w || is_negative_h || is_negative_x || is_negative_y) {
+		//DBGConsole_Msg(0, "PrePositiveViewport: %ld, %ld, %ld, %ld", vp_x, vp_y, vp_w, vp_h);
+		if (is_negative_x) {
+			vp_w += vp_x;
+			vp_x -= vp_x;
+			is_negative_x = false;
+		}
+		if (is_negative_y) {
+			vp_h += vp_y;
+			vp_y -= vp_y;
+			is_negative_y = false;
+		}
+		if (is_negative_w) { 
+			vp_w = -vp_w;
+			vp_x = vp_x - vp_w;
+			is_negative_w = false;
+		}
+		if (is_negative_h) {
+			vp_h = -vp_h;
+			vp_y = vp_y - vp_h;
+			is_negative_h = false;
+		}
+		SetInternalViewport();
+	}
+}
+#endif
 
 // Returns true if triangle visible and rendered, false otherwise
 
@@ -454,21 +602,21 @@ bool BaseRenderer::AddTri(u32 v0, u32 v1, u32 v2)
 	if( mTnL.Flags.TriCull )
 	{
 #ifdef DAEDALUS_PSP_USE_VFPU
-		const s32 NSign {vfpu_TriNormSign((u8*)&mVtxProjected[0], v0, v1, v2)};
+		const s32 NSign = vfpu_TriNormSign((u8*)&mVtxProjected[0], v0, v1, v2);
 		if( NSign <= 0 )
 #else
-		const v4 & A {mVtxProjected[v0].ProjectedPos};
-		const v4 & B {mVtxProjected[v1].ProjectedPos};
-		const v4 & C {mVtxProjected[v2].ProjectedPos};
+		const v4 & A = mVtxProjected[v0].ProjectedPos;
+		const v4 & B = mVtxProjected[v1].ProjectedPos;
+		const v4 & C = mVtxProjected[v2].ProjectedPos;
 
 		//Avoid using 1/w, will use five more mults but save three divides //Corn
 		//Precalc reused w combos so compiler does a proper job
-		const f32 ABw  {A.w*B.w};
-		const f32 ACw  {A.w*C.w};
-		const f32 BCw  {B.w*C.w};
-		const f32 AxBC {A.x*BCw};
-		const f32 AyBC {A.y*BCw};
-		const f32 NSign {(((B.x*ACw - AxBC)*(C.y*ABw - AyBC) - (C.x*ABw - AxBC)*(B.y*ACw - AyBC)) * ABw * C.w)};
+		const f32 ABw  = A.w*B.w;
+		const f32 ACw  = A.w*C.w;
+		const f32 BCw  = B.w*C.w;
+		const f32 AxBC = A.x*BCw;
+		const f32 AyBC = A.y*BCw;
+		const f32 NSign = (((B.x*ACw - AxBC)*(C.y*ABw - AyBC) - (C.x*ABw - AxBC)*(B.y*ACw - AyBC)) * ABw * C.w);
 		if( NSign <= 0.0f )
 #endif
 		{
@@ -524,8 +672,14 @@ void BaseRenderer::FlushTris()
 	#ifdef DAEDALUS_ENABLE_ASSERTS
 	DAEDALUS_ASSERT( mNumIndices, "Call to FlushTris() with nothing to render" );
 	#endif
+	#ifdef DAEDALUS_VITA
+	float *vtx;
+	float *tex;
+	uint32_t *clr;
+	uint32_t count = 0;
+	#else
 	TempVerts temp_verts;
-
+	#endif
 	// If any bit is set here it means we have to clip the trianlges since PSP HW clipping sux!
 #ifdef DAEDALUS_PSP
 	if(mVtxClipFlagsUnion != 0)
@@ -535,11 +689,19 @@ void BaseRenderer::FlushTris()
 	else
 #endif
 	{
+		#ifdef DAEDALUS_VITA
+		count = PrepareTrisUnclipped( &clr );
+		#else
 		PrepareTrisUnclipped( &temp_verts );
+		#endif
 	}
 
 	// No vertices to render? //Corn
+#ifdef DAEDALUS_VITA
+	if( count == 0 )
+#else
 	if( temp_verts.Count == 0 )
+#endif
 	{
 		mNumIndices = 0;
 		mVtxClipFlagsUnion = 0;
@@ -574,8 +736,11 @@ void BaseRenderer::FlushTris()
 	#endif
 	//
 	//	Render out our vertices
+#ifdef DAEDALUS_VITA
+	RenderTriangles( clr, count, gRDPOtherMode.depth_source ? true : false );
+#else
 	RenderTriangles( temp_verts.Verts, temp_verts.Count, gRDPOtherMode.depth_source ? true : false );
-
+#endif
 	mNumIndices = 0;
 	mVtxClipFlagsUnion = 0;
 }
@@ -589,7 +754,7 @@ void BaseRenderer::FlushTris()
 //Croping triangles just outside the NDC box and let PSP HW do the final crop
 //improves quality but fails in some games (Rocket Robot/Lego racers)//Corn
 
-ALIGNED_TYPE(const v4, NDCPlane[6], 16) =
+const v4 NDCPlane[6] =
 {
 	v4(  0.f,  0.f, -1.f, -1.f ),	// near
 	v4(  0.f,  0.f,  1.f, -1.f ),	// far
@@ -639,19 +804,19 @@ static u32 clipToHyperPlane( DaedalusVtx4 * dest, const DaedalusVtx4 * source, u
 	u32 outCount(0);
 	DaedalusVtx4 * out(dest);
 
-	const DaedalusVtx4 * a {};
+	const DaedalusVtx4 * a;
 	const DaedalusVtx4 * b(source);
 
 	f32 bDotPlane = b->ProjectedPos.Dot( plane );
 
-	for( u32 i {}; i < inCount + 1; ++i)
+	for( u32 i = 0; i < inCount + 1; ++i)
 	{
 		//a = &source[i%inCount];
-		const s32 condition {i - inCount};
-		const s32 index {(( ( condition >> 31 ) & ( i ^ condition ) ) ^ condition )};
+		const u32 condition = i - inCount;
+		const u32 index = (( ( condition >> 31 ) & ( i ^ condition ) ) ^ condition );
 		a = &source[index];
 
-		f32 aDotPlane {a->ProjectedPos.Dot( plane )};
+		f32 aDotPlane = a->ProjectedPos.Dot( plane );
 
 		// current point inside
 		if ( aDotPlane <= 0.f )
@@ -716,13 +881,13 @@ namespace
 	DaedalusVtx4		temp_a[ 8 ] {};
 	DaedalusVtx4		temp_b[ 8 ] {};
 	// Flying Dragon clips more than 256
-	const u32			MAX_CLIPPED_VERTS {320};
+	const u32			MAX_CLIPPED_VERTS = 320;
 	DaedalusVtx			clip_vtx[MAX_CLIPPED_VERTS];
 }
 
 
 //
-
+#ifndef DAEDALUS_VITA
 void BaseRenderer::PrepareTrisClipped( TempVerts * temp_verts ) const
 {
 	DAEDALUS_PROFILE( "BaseRenderer::PrepareTrisClipped" );
@@ -743,9 +908,9 @@ void BaseRenderer::PrepareTrisClipped( TempVerts * temp_verts ) const
 
 	for(u32 i {}; i < (mNumIndices - 2);)
 	{
-		const u32 & idx0 {mIndexBuffer[ i++ ]};
-		const u32 & idx1 {mIndexBuffer[ i++ ]};
-		const u32 & idx2 {mIndexBuffer[ i++ ]};
+		const u32 & idx0 = mIndexBuffer[ i++ ];
+		const u32 & idx1 = mIndexBuffer[ i++ ];
+		const u32 & idx2 = mIndexBuffer[ i++ ];
 
 		//Check if any of the vertices are outside the clipbox (NDC), if so we need to clip the triangle
 		if(mVtxProjected[idx0].ClipFlags | mVtxProjected[idx1].ClipFlags | mVtxProjected[idx2].ClipFlags)
@@ -851,19 +1016,23 @@ void BaseRenderer::PrepareTrisClipped( TempVerts * temp_verts ) const
 		memcpy( p_vertices, clip_vtx, num_vertices * sizeof(DaedalusVtx) );	//std memcpy() is as fast as VFPU here!
 	}
 }
-
+#endif
 
 //
-
+#ifdef DAEDALUS_VITA
+uint32_t BaseRenderer::PrepareTrisUnclipped( uint32_t **clr )
+#else
 void BaseRenderer::PrepareTrisUnclipped( TempVerts * temp_verts ) const
+#endif
 {
 	DAEDALUS_PROFILE( "BaseRenderer::PrepareTrisUnclipped" );
 	#ifdef DAEDALUS_ENABLE_ASSERTS
 	DAEDALUS_ASSERT( mNumIndices > 0, "The number of indices should have been checked" );
 	#endif
 	const u32		num_vertices = mNumIndices;
+#ifndef DAEDALUS_VITA
 	DaedalusVtx *	p_vertices   = temp_verts->Alloc(num_vertices);
-
+#endif
 	//
 	//	Previously this code set up an index buffer to avoid processing the
 	//	same vertices more than once - we avoid this now as there is apparently
@@ -879,7 +1048,76 @@ void BaseRenderer::PrepareTrisUnclipped( TempVerts * temp_verts ) const
 	//
 	//	Now we just shuffle all the data across directly (potentially duplicating verts)
 	//
-	for( u32 i {}; i < num_vertices; ++i )
+#ifdef DAEDALUS_VITA
+	vglVertexPointerMapped(gVertexBuffer);
+	*clr = gColorBuffer;
+	if (mTnL.Flags.Texture) {
+		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+		vglTexCoordPointerMapped(gTexCoordBuffer);
+		
+		if (g_ROM.T0_SKIP_HACK && (gRDPOtherMode.L == 0x0C184240)) UpdateTileSnapshots( mTextureTile + 1 );
+		else UpdateTileSnapshots( mTextureTile );
+		
+		CNativeTexture *texture = mBoundTexture[0];
+		
+		//if ((gRDPOtherMode.L & 0xFFFFFF00) == 0x0C184200) CDebugConsole::Get()->Msg(1, "RenderTriangles: L: 0x%08X", gRDPOtherMode.L);
+		
+		if( texture && (mTnL.Flags._u32 & (TNL_LIGHT|TNL_TEXGEN)) != (TNL_LIGHT|TNL_TEXGEN) )
+		{
+			float scale_x = texture->GetScaleX();
+			float scale_y = texture->GetScaleY();
+				
+			// Hack to fix the sun in Zelda OOT/MM
+			if (g_ROM.ZELDA_HACK && (gRDPOtherMode.L == 0x0C184241))
+			{
+				scale_x *= 0.5f;
+				scale_y *= 0.5f;
+			}
+
+			for( u32 i = 0; i < num_vertices; ++i )
+			{
+				u32 index = mIndexBuffer[ i ];
+		
+				gVertexBuffer[0] = mVtxProjected[ index ].TransformedPos.x;
+				gVertexBuffer[1] = mVtxProjected[ index ].TransformedPos.y;
+				gVertexBuffer[2] = mVtxProjected[ index ].TransformedPos.z;
+				gTexCoordBuffer[0] = (mVtxProjected[ index ].Texture.x * scale_x - (mTileTopLeft[ 0 ].s  / 4.f * scale_x));
+				gTexCoordBuffer[1] = (mVtxProjected[ index ].Texture.y * scale_y - (mTileTopLeft[ 0 ].t  / 4.f * scale_y));
+				gColorBuffer[i] = c32(mVtxProjected[ index ].Colour).GetColour();
+				gVertexBuffer += 3;
+				gTexCoordBuffer += 2;
+			}
+		} else {
+			for( u32 i = 0; i < num_vertices; ++i )
+			{
+				u32 index = mIndexBuffer[ i ];
+		
+				gVertexBuffer[0] = mVtxProjected[ index ].TransformedPos.x;
+				gVertexBuffer[1] = mVtxProjected[ index ].TransformedPos.y;
+				gVertexBuffer[2] = mVtxProjected[ index ].TransformedPos.z;
+				gTexCoordBuffer[0] = mVtxProjected[ index ].Texture.x;
+				gTexCoordBuffer[1] = mVtxProjected[ index ].Texture.y;
+				gColorBuffer[i] = c32(mVtxProjected[ index ].Colour).GetColour();
+				gVertexBuffer += 3;
+				gTexCoordBuffer += 2;
+			}
+		}
+	} else {
+		for( u32 i = 0; i < num_vertices; ++i )
+		{
+			u32 index = mIndexBuffer[ i ];
+		
+			gVertexBuffer[0] = mVtxProjected[ index ].TransformedPos.x;
+			gVertexBuffer[1] = mVtxProjected[ index ].TransformedPos.y;
+			gVertexBuffer[2] = mVtxProjected[ index ].TransformedPos.z;
+			gColorBuffer[i] = c32(mVtxProjected[ index ].Colour).GetColour();
+			gVertexBuffer += 3;
+		}
+	}
+	gColorBuffer += num_vertices;
+	return num_vertices;
+#else
+	for( u32 i = 0; i < num_vertices; ++i )
 	{
 		u32 index = mIndexBuffer[ i ];
 
@@ -889,7 +1127,8 @@ void BaseRenderer::PrepareTrisUnclipped( TempVerts * temp_verts ) const
 		p_vertices[ i ].Position.y = mVtxProjected[ index ].TransformedPos.y;
 		p_vertices[ i ].Position.z = mVtxProjected[ index ].TransformedPos.z;
 	}
- #endif
+#endif
+#endif
 }
 
 
@@ -1150,8 +1389,8 @@ void BaseRenderer::SetNewVertexInfo(u32 address, u32 v0, u32 n)
 				else
 				{
 					//Cheap way to do Acos(x)/Pi (abs() fixes star in SM64, sort of) //Corn
-					f32 NormX {fabsf( norm.x )};
-					f32 NormY {fabsf( norm.y )};
+					f32 NormX = fabsf( norm.x );
+					f32 NormY = fabsf( norm.y );
 					mVtxProjected[i].Texture.x =  0.5f - 0.25f * NormX - 0.25f * NormX * NormX * NormX;
 					mVtxProjected[i].Texture.y =  0.5f - 0.25f * NormY - 0.25f * NormY * NormY * NormY;
 				}
@@ -1209,15 +1448,15 @@ void BaseRenderer::SetNewVertexInfo(u32 address, u32 v0, u32 n)
 void BaseRenderer::SetNewVertexInfoConker(u32 address, u32 v0, u32 n)
 {
 	const FiddledVtx * const pVtxBase( (const FiddledVtx*)(g_pu8RamBase + address) );
-	const Matrix4x4 & mat_project {mProjectionMat};
-	const Matrix4x4 & mat_world {mModelViewStack[mModelViewTop]};
+	const Matrix4x4 & mat_project = mProjectionMat;
+	const Matrix4x4 & mat_world = mModelViewStack[mModelViewTop];
 
 #ifdef DAEDALUS_DEBUG_DISPLAYLIST
 	DL_PF( "    Ambient color RGB[%f][%f][%f] Texture scale X[%f] Texture scale Y[%f]", mTnL.Lights[mTnL.NumLights].Colour.x, mTnL.Lights[mTnL.NumLights].Colour.y, mTnL.Lights[mTnL.NumLights].Colour.z, mTnL.TextureScaleX, mTnL.TextureScaleY);
 	DL_PF( "    Light[%s] Texture[%s] EnvMap[%s] Fog[%s]", (mTnL.Flags.Light)? "On":"Off", (mTnL.Flags.Texture)? "On":"Off", (mTnL.Flags.TexGen)? (mTnL.Flags.TexGenLin)? "Linear":"Spherical":"Off", (mTnL.Flags.Fog)? "On":"Off");
 #endif
 
-	const s8 *mn {(s8*)(g_pu8RamBase + gAuxAddr)};
+	const s8 *mn = (s8*)(g_pu8RamBase + gAuxAddr);
 	_TnLVFPUCBFD( &mat_world, &mat_project, pVtxBase, &mVtxProjected[v0], n, &mTnL, mn, v0<<1 );
 }
 
@@ -1228,8 +1467,8 @@ void BaseRenderer::SetNewVertexInfoConker(u32 address, u32 v0, u32 n)
 {
 	//DBGConsole_Msg(0, "In SetNewVertexInfo");
 	const FiddledVtx * const pVtxBase( (const FiddledVtx*)(g_pu8RamBase + address) );
-	const Matrix4x4 & mat_project {mProjectionMat};
-	const Matrix4x4 & mat_world {mModelViewStack[mModelViewTop]};
+	const Matrix4x4 & mat_project = mProjectionMat;
+	const Matrix4x4 & mat_world = mModelViewStack[mModelViewTop];
 
 #ifdef DAEDALUS_DEBUG_DISPLAYLIST
 	DL_PF( "    Ambient color RGB[%f][%f][%f] Texture scale X[%f] Texture scale Y[%f]", mTnL.Lights[mTnL.NumLights].Colour.x, mTnL.Lights[mTnL.NumLights].Colour.y, mTnL.Lights[mTnL.NumLights].Colour.z, mTnL.TextureScaleX, mTnL.TextureScaleY);
@@ -1237,13 +1476,13 @@ void BaseRenderer::SetNewVertexInfoConker(u32 address, u32 v0, u32 n)
 #endif
 
 	//Model normal base vector
-	const s8 *mn {(const s8*)(g_pu8RamBase + gAuxAddr)};
+	const s8 *mn = (const s8*)(g_pu8RamBase + gAuxAddr);
 
 	// Transform and Project + Lighting or Transform and Project with Colour
 	//
 	for (u32 i {v0}; i < v0 + n; i++)
 	{
-		const FiddledVtx & vert {pVtxBase[i - v0]};
+		const FiddledVtx & vert = pVtxBase[i - v0];
 
 		// VTX Transform
 		//
@@ -1257,7 +1496,7 @@ void BaseRenderer::SetNewVertexInfoConker(u32 address, u32 v0, u32 n)
 
 		//	Initialise the clipping flags
 		//
-		u32 clip_flags {};
+		u32 clip_flags = 0;
 		if		(projected.x < -projected.w)	clip_flags |= X_POS;
 		else if (projected.x > projected.w)		clip_flags |= X_NEG;
 
@@ -1280,18 +1519,18 @@ void BaseRenderer::SetNewVertexInfoConker(u32 address, u32 v0, u32 n)
 			v3 model_normal( mn[((i<<1)+0)^3], mn[((i<<1)+1)^3], vert.normz );
 			v3 vecTransformedNormal = mat_world.TransformNormal( model_normal );
 			vecTransformedNormal.Normalise();
-			const v3 & norm {vecTransformedNormal};
-			const v3 & col {mTnL.Lights[mTnL.NumLights].Colour};
+			const v3 & norm = vecTransformedNormal;
+			const v3 & col = mTnL.Lights[mTnL.NumLights].Colour;
 
-			v4 Pos {};
+			v4 Pos;
 			Pos.x = (projected.x + mTnL.CoordMod[8]) * mTnL.CoordMod[12];
 			Pos.y = (projected.y + mTnL.CoordMod[9]) * mTnL.CoordMod[13];
 			Pos.z = (projected.z + mTnL.CoordMod[10])* mTnL.CoordMod[14];
 			Pos.w = (projected.w + mTnL.CoordMod[11])* mTnL.CoordMod[15];
 
 			v3 result( col.x, col.y, col.z );
-			f32 fCosT {};
-			u32 l {};
+			f32 fCosT;
+			u32 l;
 
 			if ( mTnL.Flags.PointLight )
 			{	//POINT LIGHT
@@ -1302,7 +1541,7 @@ void BaseRenderer::SetNewVertexInfoConker(u32 address, u32 v0, u32 n)
 						fCosT = norm.Dot( mTnL.Lights[l].Direction );
 						if (fCosT > 0.0f)
 						{
-							f32 pi {mTnL.Lights[l].Iscale / (Pos - mTnL.Lights[l].Position).LengthSq()};
+							f32 pi = mTnL.Lights[l].Iscale / (Pos - mTnL.Lights[l].Position).LengthSq();
 							if (pi < 1.0f) fCosT *= pi;
 
 							result.x += mTnL.Lights[l].Colour.x * fCosT;
@@ -1376,8 +1615,8 @@ void BaseRenderer::SetNewVertexInfoConker(u32 address, u32 v0, u32 n)
 
 void BaseRenderer::SetNewVertexInfoDKR(u32 address, u32 v0, u32 n, bool billboard)
 {
-	u32 pVtxBase {u32(g_pu8RamBase + address)};
-	const Matrix4x4 & mat_world_project {mModelViewStack[mDKRMatIdx]};
+	u32 pVtxBase = u32(g_pu8RamBase + address);
+	const Matrix4x4 & mat_world_project = mModelViewStack[mDKRMatIdx];
 
 #ifdef DAEDALUS_DEBUG_DISPLAYLIST
 	DL_PF( "    Ambient color RGB[%f][%f][%f] Texture scale X[%f] Texture scale Y[%f]", mTnL.Lights[mTnL.NumLights].Colour.x, mTnL.Lights[mTnL.NumLights].Colour.y, mTnL.Lights[mTnL.NumLights].Colour.z, mTnL.TextureScaleX, mTnL.TextureScaleY);
@@ -1406,27 +1645,27 @@ void BaseRenderer::SetNewVertexInfoDKR(u32 address, u32 v0, u32 n, bool billboar
 		mat.mRaw[6] *= mModelViewStack[2].mRaw[10] * 0.5f;
 		mat.mRaw[10] *= mModelViewStack[2].mRaw[10] * 0.5f;
 
-		for (u32 i {v0}; i < v0 + n; i++)
+		for (u32 i = v0; i < v0 + n; i++)
 		{
-			v3 w {};
+			v3 w;
 			w.x = *(s16*)((pVtxBase + 0) ^ 2);
 			w.y = *(s16*)((pVtxBase + 2) ^ 2);
 			w.z = *(s16*)((pVtxBase + 4) ^ 2);
 
-			w = mat.TransformNormal( w );
+			v3 w2 = mat.TransformNormal( w );
 
 			v4 & transformed( mVtxProjected[i].TransformedPos );
-			transformed.x = BaseVec.x + w.x;
-			transformed.y = BaseVec.y + w.y;
-			transformed.z = BaseVec.z + w.z;
+			transformed.x = BaseVec.x + w2.x;
+			transformed.y = BaseVec.y + w2.y;
+			transformed.z = BaseVec.z + w2.z;
 			transformed.w = 1.0f;
 
 			// Set Clipflags, zero clippflags if billbording //Corn
 			mVtxProjected[i].ClipFlags = 0;
 
 			// Assign true vert colour
-			const u32 WL {*(u16*)((pVtxBase + 6) ^ 2)};
-			const u32 WH {*(u16*)((pVtxBase + 8) ^ 2)};
+			const u32 WL = *(u16*)((pVtxBase + 6) ^ 2);
+			const u32 WH = *(u16*)((pVtxBase + 8) ^ 2);
 
 			mVtxProjected[i].Colour.x = (1.0f / 255.0f) * (WL >> 8);
 			mVtxProjected[i].Colour.y = (1.0f / 255.0f) * (WL & 0xFF);
@@ -1447,7 +1686,7 @@ void BaseRenderer::SetNewVertexInfoDKR(u32 address, u32 v0, u32 n, bool billboar
 #ifdef DAEDALUS_PSP_USE_VFPU
 		_TnLVFPUDKR( n, &mat_world_project, (const FiddledVtx*)pVtxBase, &mVtxProjected[v0] );
 #else
-		for (u32 i {v0}; i < v0 + n; i++)
+		for (u32 i = v0; i < v0 + n; i++)
 		{
 			v4 & transformed( mVtxProjected[i].TransformedPos );
 			transformed.x = *(s16*)((pVtxBase + 0) ^ 2);
@@ -1459,7 +1698,7 @@ void BaseRenderer::SetNewVertexInfoDKR(u32 address, u32 v0, u32 n, bool billboar
 			projected = mat_world_project.Transform( transformed );	//Do projection
 
 			// Set Clipflags
-			u32 clip_flags {};
+			u32 clip_flags = 0;
 			if		(projected.x < -projected.w)	clip_flags |= X_POS;
 			else if (projected.x > projected.w)		clip_flags |= X_NEG;
 
@@ -1618,8 +1857,8 @@ void BaseRenderer::ModifyVertexInfo(u32 whered, u32 vert, u32 val)
 
 		case G_MWO_POINT_ST:
 			{
-				s16 tu {s16(val >> 16)};
-				s16 tv {s16(val & 0xFFFF)};
+				s16 tu = s16(val >> 16);
+				s16 tv = s16(val & 0xFFFF);
 				#ifdef DAEDALUS_DEBUG_DISPLAYLIST
 				DL_PF( "    Setting tu/tv to %f, %f", tu/32.0f, tv/32.0f );
 				#endif
@@ -1631,8 +1870,8 @@ void BaseRenderer::ModifyVertexInfo(u32 whered, u32 vert, u32 val)
 			{
 				if( g_ROM.GameHacks == TARZAN ) return;
 
-				u32 x {(val >> 16) >> 2};
-				u32 y {(val & 0xFFFF) >> 2};
+				u32 x = (val >> 16) >> 2;
+				u32 y = (val & 0xFFFF) >> 2;
 
 				// Fixes the blocks lining up backwards in New Tetris
 				//
@@ -1691,10 +1930,10 @@ inline void BaseRenderer::SetVtxColor( u32 vert, u32 color )
 #ifdef DAEDALUS_ENABLE_ASSERTS
 	DAEDALUS_ASSERT( vert < kMaxN64Vertices, "Vertex index is out of bounds (%d)", vert );
 #endif
-	u32 r {(color>>24)&0xFF};
-	u32 g {(color>>16)&0xFF};
-	u32 b {(color>>8)&0xFF};
-	u32 a {(color)&0xFF};
+	u32 r = (color>>24) & 0xFF;
+	u32 g = (color>>16) & 0xFF;
+	u32 b = (color>>8) & 0xFF;
+	u32 a = (color) & 0xFF;
 	mVtxProjected[vert].Colour = v4( r * (1.0f / 255.0f), g * (1.0f / 255.0f), b * (1.0f / 255.0f), a * (1.0f / 255.0f) );
 }
 
@@ -1743,7 +1982,8 @@ void BaseRenderer::UpdateTileSnapshots( u32 tile_idx )
 	UpdateTileSnapshot( 0, tile_idx );
 
 #if defined(DAEDALUS_PSP)
-	if ( g_ROM.LOAD_T1_HACK & !gRDPOtherMode.text_lod )
+
+	if ( g_ROM.LOAD_T1_HACK && !gRDPOtherMode.text_lod )
 	{
 		// LOD is disabled - use two textures
 		UpdateTileSnapshot( 1, tile_idx + 1 );
@@ -1753,7 +1993,7 @@ void BaseRenderer::UpdateTileSnapshots( u32 tile_idx )
 
 	if (gRDPOtherMode.cycle_type == CYCLE_2CYCLE)
 	{
-		u32 t1_tile {(tile_idx + 1) & 7};
+		u32 t1_tile = (tile_idx + 1) & 7;
 
 		// NB: I don't think we need to do this. lod_frac is set to 0.0 in the
 		// OSX pixel shader, so it'll always use Texel 0 when mipmapping.
@@ -1794,8 +2034,8 @@ static void T1Hack(const TextureInfo & ti0, CNativeTexture * texture0,
 
 			//Merge RGB + I -> RGBA in texture 1
 			//We do two pixels in one go since its 16bit (RGBA_4444) //Corn
-			u32 size {texture1->GetWidth() * texture1->GetHeight() >> 1};
-			for(u32 i {}; i < size ; i++)
+			u32 size = texture1->GetWidth() * texture1->GetHeight() >> 1;
+			for(u32 i = 0; i < size ; i++)
 			{
 				*dst = (*dst & 0xF000F000) | (*src & 0x0FFF0FFF);
 				dst++;
@@ -1804,15 +2044,56 @@ static void T1Hack(const TextureInfo & ti0, CNativeTexture * texture0,
 		}
 		else
 		{
-			const u32* src {static_cast<const u32*>(texture1->GetData())};
-			u32* dst      {static_cast<      u32*>(texture0->GetData())};
+			const u32* src = static_cast<const u32*>(texture1->GetData());
+			u32* dst      = static_cast<      u32*>(texture0->GetData());
 
 			//Merge RGB + I -> RGBA in texture 0
 			//We do two pixels in one go since its 16bit (RGBA_4444) //Corn
-			u32 size {texture1->GetWidth() * texture1->GetHeight() >> 1};
-			for(u32 i {}; i < size ; i++)
+			u32 size = texture1->GetWidth() * texture1->GetHeight() >> 1;
+			for(u32 i = 0; i < size ; i++)
 			{
 				*dst = (*dst & 0x0FFF0FFF) | (*src & 0xF000F000);
+				dst++;
+				src++;
+			}
+		}
+	}
+}
+#else
+static void T1Hack(const TextureInfo & ti0, CNativeTexture * texture0,
+				   const TextureInfo & ti1, CNativeTexture * texture1)
+{
+	if((ti0.GetFormat() == G_IM_FMT_RGBA) &&
+	   (ti1.GetFormat() == G_IM_FMT_I) &&
+	   (ti1.GetWidth()  == ti0.GetWidth()) &&
+	   (ti1.GetHeight() == ti0.GetHeight()))
+	{
+		if( g_ROM.T1_HACK )
+		{
+			const u32 * src = static_cast<const u32*>(texture0->GetData());
+			u32 * dst       = static_cast<      u32*>(texture1->GetData());
+
+			//Merge RGB + I -> RGBA in texture 1
+			//We do two pixels in one go since its 16bit (RGBA_4444) //Corn
+			u32 size = texture1->GetCorrectedWidth() * texture1->GetCorrectedHeight();
+			for(u32 i = 0; i < size ; i++)
+			{
+				*dst = (*dst & 0xFF000000) | (*src & 0x00FFFFFF);
+				dst++;
+				src++;
+			}
+		}
+		else
+		{
+			const u32* src = static_cast<const u32*>(texture1->GetData());
+			u32* dst      = static_cast<      u32*>(texture0->GetData());
+
+			//Merge RGB + I -> RGBA in texture 0
+			//We do two pixels in one go since its 16bit (RGBA_4444) //Corn
+			u32 size = texture1->GetCorrectedWidth() * texture1->GetCorrectedHeight();
+			for(u32 i = 0; i < size ; i++)
+			{
+				*dst = (*dst & 0x00FFFFFF) | (*src & 0xFF000000);
 				dst++;
 				src++;
 			}
@@ -1838,9 +2119,10 @@ void BaseRenderer::UpdateTileSnapshot( u32 index, u32 tile_idx )
 	// It might just be code that lazily does a texrect with Primcolour (i.e. not using either T0 or T1)?
 	// DAEDALUS_ASSERT( gRDPStateManager.IsTileInitialised( tile_idx ), "Tile %d hasn't been set up (index %d)", tile_idx, index );
 
-	const TextureInfo &  ti        {gRDPStateManager.GetUpdatedTextureDescriptor( tile_idx )};
-	const RDP_Tile &     rdp_tile  {gRDPStateManager.GetTile( tile_idx )};
-	const RDP_TileSize & tile_size {gRDPStateManager.GetTileSize( tile_idx )};
+	const TextureInfo &  ti        = gRDPStateManager.GetUpdatedTextureDescriptor( tile_idx );
+	
+	const RDP_Tile &     rdp_tile  = gRDPStateManager.GetTile( tile_idx );
+	const RDP_TileSize & tile_size = gRDPStateManager.GetTileSize( tile_idx );
 
 	// Avoid texture update, if texture is the same as last time around.
 	if( mBoundTexture[ index ] == nullptr || mBoundTextureInfo[ index ] != ti )
@@ -1853,20 +2135,18 @@ void BaseRenderer::UpdateTileSnapshot( u32 index, u32 tile_idx )
 		// else
 		// {
 			CRefPtr<CNativeTexture> texture = CTextureCache::Get()->GetOrCreateTexture( ti );
-
+		
 			if( texture != nullptr && texture != mBoundTexture[ index ] )
 			{
 				mBoundTextureInfo[index] = ti;
 				mBoundTexture[index]     = texture;
 
-#ifdef DAEDALUS_PSP
 				//If second texture is loaded try to merge two textures RGB(T0) + A(T1) into one RGBA(T1) //Corn
 				//If T1 Hack is not enabled index can never be other than 0
 				if(index)
 				{
 					T1Hack(mBoundTextureInfo[0], mBoundTexture[0], mBoundTextureInfo[1], mBoundTexture[1]);
 				}
-#endif
 			// }
 		}
 	}
@@ -1874,11 +2154,11 @@ void BaseRenderer::UpdateTileSnapshot( u32 index, u32 tile_idx )
 	// Initialise the clamping state. When the mask is 0, it forces clamp mode.
 	//
 #ifdef DAEDALUS_PSP
-	u32 mode_u {(u32)((rdp_tile.clamp_s || (rdp_tile.mask_s == 0)) ? GU_CLAMP : GU_REPEAT)};
-	u32 mode_v {(u32)((rdp_tile.clamp_t || (rdp_tile.mask_t == 0)) ? GU_CLAMP : GU_REPEAT)};
+	u32 mode_u = (u32)((rdp_tile.clamp_s || (rdp_tile.mask_s == 0)) ? GU_CLAMP : GU_REPEAT);
+	u32 mode_v = (u32)((rdp_tile.clamp_t || (rdp_tile.mask_t == 0)) ? GU_CLAMP : GU_REPEAT);
 #else
-	u32 mode_u {(u32)((rdp_tile.clamp_s || (rdp_tile.mask_s == 0)) ? GL_CLAMP : GL_REPEAT)};
-	u32 mode_v {(u32)((rdp_tile.clamp_t || (rdp_tile.mask_t == 0)) ? GL_CLAMP : GL_REPEAT)};
+	u32 mode_u = (u32)((rdp_tile.clamp_s || (rdp_tile.mask_s == 0)) ? GL_CLAMP : GL_REPEAT);
+	u32 mode_v = (u32)((rdp_tile.clamp_t || (rdp_tile.mask_t == 0)) ? GL_CLAMP : GL_REPEAT);
 #endif
 	//	In CRDPStateManager::GetTextureDescriptor, we limit the maximum dimension of a
 	//	texture to that define by the mask_s/mask_t value.
@@ -1944,13 +2224,13 @@ void BaseRenderer::UpdateTileSnapshot( u32 index, u32 tile_idx )
 // and everything works correctly.
 inline void FixUV(u32 * wrap, s16 * c0_, s16 * c1_, s16 offset, s32 size)
 {
-	#ifdef DAEDALUS_ENABLE_ASSERTS
+#ifdef DAEDALUS_ENABLE_ASSERTS
 	DAEDALUS_ASSERT(size > 0, "Texture has crazy width/height");
-	#endif
-	s32 offset_10_5 {offset << 3};
+#endif
+	s32 offset_10_5 = offset << 3;
 
-	s32 c0 {*c0_ - offset_10_5};
-	s32 c1 {*c1_ - offset_10_5};
+	s32 c0 = *c0_ - offset_10_5;
+	s32 c1 = *c1_ - offset_10_5;
 
 	// Many texrects already have GU_CLAMP set, so avoid some work.
 #ifdef DAEDALUS_PSP
@@ -1967,7 +2247,7 @@ inline void FixUV(u32 * wrap, s16 * c0_, s16 * c1_, s16 offset, s32 size)
 			// Figure out by how much to translate so that the lowest of c0/c1 lies in the range [0,size]
 			// If we do lowest%size, we run the risk of implementation dependent behaviour for modulo of negative values.
 			// lowest + (size<<16) just adds a large multiple of size, which guarantees the result is positive.
-			s32 trans {((lowest + (size<<16)) % size) - lowest};
+			s32 trans = ((lowest + (size<<16)) % size) - lowest;
 
 			// NB! we have to apply the same offset to both coords, to preserve direction of mapping (i.e., don't clamp each independently)
 			c0 += trans;
@@ -1994,9 +2274,9 @@ void BaseRenderer::PrepareTexRectUVs(TexCoord * puv0, TexCoord * puv1)
 {
 	const RDP_Tile & rdp_tile {gRDPStateManager.GetTile( mActiveTile[0] )};
 
-	TexCoord	offset {mTileTopLeft[0]};
-	u32 		size_x {mBoundTextureInfo[0].GetWidth()  << 5};
-	u32 		size_y {mBoundTextureInfo[0].GetHeight() << 5};
+	TexCoord	offset = mTileTopLeft[0];
+	u32 		size_x = mBoundTextureInfo[0].GetWidth()  << 5;
+	u32 		size_y = mBoundTextureInfo[0].GetHeight() << 5;
 
 	// If mirroring, we need to scroll twice as far to line up.
 	if (rdp_tile.mirror_s)	size_x *= 2;
@@ -2046,16 +2326,16 @@ void BaseRenderer::SetScissor( u32 x0, u32 y0, u32 x1, u32 y1 )
 	v2 n64_tl( (f32)x0, (f32)y0 );
 	v2 n64_br( (f32)x1, (f32)y1 );
 
-	v2 screen_tl {};
-	v2 screen_br {};
+	v2 screen_tl;
+	v2 screen_br;
 	ConvertN64ToScreen( n64_tl, screen_tl );
 	ConvertN64ToScreen( n64_br, screen_br );
 
 	//Clamp TOP and LEFT values to 0 if < 0 , needed for zooming //Corn
-	s32 l {Max<s32>( s32(screen_tl.x), 0 )};
-	s32 t {Max<s32>( s32(screen_tl.y), 0 )};
-	s32 r {           s32(screen_br.x)};
-	s32 b {          s32(screen_br.y)};
+	s32 l = Max<s32>( s32(screen_tl.x), 0 );
+	s32 t = Max<s32>( s32(screen_tl.y), 0 );
+	s32 r =           s32(screen_br.x);
+	s32 b =           s32(screen_br.y);
 
 #if defined(DAEDALUS_PSP)
 	// N.B. Think the arguments are x0,y0,x1,y1, and not x,y,w,h as the docs describe
@@ -2063,14 +2343,14 @@ void BaseRenderer::SetScissor( u32 x0, u32 y0, u32 x1, u32 y1 )
 	sceGuScissor( l, t, r, b );
 #elif defined(DAEDALUS_GL)
 	// NB: OpenGL is x,y,w,h. Errors if width or height is negative, so clamp this.
-	s32 w {Max<s32>( r - l, 0 )};
-	s32 h {Max<s32>( b - t, 0 )};
+	s32 w = Max<s32>( r - l, 0 );
+	s32 h = Max<s32>( b - t, 0 );
 	glScissor( l, (s32)mScreenHeight - (t + h), w, h );
 #elif defined(DAEDALUS_VITA)
 	// NB: OpenGL is x,y,w,h. Errors if width or height is negative, so clamp this.
-	s32 w {Max<s32>( r - l, 0 )};
-	s32 h {Max<s32>( b - t, 0 )};
-	glScissor( l, (s32)SCR_HEIGHT - (t + h), w, h );
+	s32 w = Max<s32>( r - l, 0 );
+	s32 h = Max<s32>( b - t, 0 );
+	if (g_ROM.GameHacks != POKEMON_STADIUM) glScissor( l, (s32)SCR_HEIGHT - (t + h), w, h );
 #else
 	DAEDALUS_ERROR("Need to implement scissor for this platform.");
 #endif
@@ -2094,7 +2374,11 @@ void BaseRenderer::SetProjection(const u32 address, bool bReplace)
 		//
 		if( g_ROM.ZELDA_HACK )
 			mProjectionMat.mRaw[14] += 0.4f;
+#ifdef DAEDALUS_VITA
+		if( gAspectRatio == RATIO_16_9_HACK )
+#else		
 		if( gGlobalPreferences.ViewportType == VT_FULLSCREEN_HD )
+#endif
 			mProjectionMat.mRaw[0] *= HD_SCALE;	//proper 16:9 scale
 	}
 	else
@@ -2229,7 +2513,11 @@ inline void BaseRenderer::PokeWorldProject()
 	{
 		mWPmodified = false;
 		mReloadProj = true;
+#ifdef DAEDALUS_VITA
+		if( gAspectRatio == RATIO_16_9_HACK )
+#else		
 		if( gGlobalPreferences.ViewportType == VT_FULLSCREEN_HD )
+#endif
 		{	//proper 16:9 scale
 			mWorldProject.mRaw[0] *= HD_SCALE;
 			mWorldProject.mRaw[4] *= HD_SCALE;

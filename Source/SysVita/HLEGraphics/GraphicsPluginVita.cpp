@@ -39,11 +39,14 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //#define DAEDALUS_FRAMERATE_ANALYSIS
 
 extern bool gFrameskipActive;
+extern u32 gRDPFrame;
+u32 oldRDPFrame;
+bool gCPURendering = true;
 
-u32		gSoundSync {44100};
-u32		gVISyncRate {1500};
-bool	gTakeScreenshot {false};
-bool	gTakeScreenshotSS {false};
+u32		gSoundSync = 44100;
+u32		gVISyncRate = 1500;
+bool	gTakeScreenshot = false;
+bool	gTakeScreenshotSS = false;
 
 EFrameskipValue		gFrameskipValue = FV_DISABLED;
 
@@ -178,15 +181,42 @@ extern u32 gNumDListsCulled;
 extern u32 gNumRectsClipped;
 #endif
 
+#define FRAME_CHECK_RATIO 120
+uint32_t old_frame;
+uint8_t frame_idx = 0;
+
 void CGraphicsPluginImpl::UpdateScreen()
 {
 	u32 current_origin = Memory_VI_GetRegister(VI_ORIGIN_REG);
 	static bool Old_FrameskipActive = false;
 	static bool Older_FrameskipActive = false;
 	
+	switch (frame_idx) {
+	case 0:
+		old_frame = gRDPFrame;
+		frame_idx++;
+		break;
+	case FRAME_CHECK_RATIO:
+		if (old_frame == gRDPFrame) gCPURendering = true;
+		frame_idx = 0;
+		break;
+	default:
+		frame_idx++;
+		break;
+	}
+	
 	if( current_origin != LastOrigin)
 	{
 		const f32 Fsync = FramerateLimiter_GetSync();
+		
+		//Calc sync rates for audio and game speed //Corn
+		if (gVideoRateMatch || gAudioRateMatch) {
+			const f32 inv_Fsync = 1.0f / Fsync;
+			gSoundSync = (u32)(44100.0f * inv_Fsync);
+			gVISyncRate = (u32)(1500.0f * inv_Fsync);
+			if( gVISyncRate > 4000 ) gVISyncRate = 4000;
+			else if ( gVISyncRate < 1500 ) gVISyncRate = 1500;
+		}
 		
 		CGraphicsContext::Get()->UpdateFrame( false );
 		

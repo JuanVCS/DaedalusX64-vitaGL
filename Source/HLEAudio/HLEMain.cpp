@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //
 //
 
+#include <stdio.h>
 #include "stdafx.h"
 #include "audiohle.h"
 #include "AudioHLEProcessor.h"
@@ -33,51 +34,31 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "Utility/Profiler.h"
 
+extern "C" {
+	extern void musyx_v1_task(OSTask *hle);
+};
+
+static bool isMusyx = false;
+
+char cur_audio_ucode[32];
+
 // Audio UCode lists
 // Dummy UCode Handler
 //
 static void SPU( AudioHLECommand command ){}
-//
-//     ABI ? : Unknown or unsupported UCode
-//
-AudioHLEInstruction ABIUnknown [0x20] = { // Unknown ABI
-	SPU, SPU, SPU, SPU, SPU, SPU, SPU, SPU,
-	SPU, SPU, SPU, SPU, SPU, SPU, SPU, SPU,
-	SPU, SPU, SPU, SPU, SPU, SPU, SPU, SPU,
-	SPU, SPU, SPU, SPU, SPU, SPU, SPU, SPU
-};
-//---------------------------------------------------------------------------------------------
-//
-//     ABI 1 : Mario64, WaveRace USA, Golden Eye 007, Quest64, SF Rush
-//				 60% of all games use this.  Distributed 3rd Party ABI
-//
-extern AudioHLEInstruction ABI1[0x20];
-//---------------------------------------------------------------------------------------------
-//
-//     ABI 2 : WaveRace JAP, MarioKart 64, Mario64 JAP RumbleEdition,
-//				 Yoshi Story, Pokemon Games, Zelda64, Zelda MoM (miyamoto)
-//				 Most NCL or NOA games (Most commands)
-extern AudioHLEInstruction ABI2[0x20];
-//---------------------------------------------------------------------------------------------
-//
-//     ABI 3 : DK64, Perfect Dark, Banjo Kazooi, Banjo Tooie
-//				 All RARE games except Golden Eye 007
-//
-extern AudioHLEInstruction ABI3[0x20];
-//---------------------------------------------------------------------------------------------
-//
-//     ABI 5 : Factor 5 - MoSys/MusyX
-//				 Rogue Squadron, Tarzan, Hydro Thunder, and TWINE
-//				 Indiana Jones and Battle for Naboo (?)
-//---------------------------------------------------------------------------------------------
-//
-// Below functions were updated
-//
 
+extern AudioHLEInstruction ABI_Common[0x20];
+extern AudioHLEInstruction ABI_GE[0x20];
+extern AudioHLEInstruction NAudio[0x20];
+extern AudioHLEInstruction NAudio_MP3[0x20];
+extern AudioHLEInstruction NAudio_DK[0x20];
+extern AudioHLEInstruction NEAD[0x20];
+extern AudioHLEInstruction NEAD_MK[0x20];
+extern AudioHLEInstruction NEAD_FZ[0x20];
 
-AudioHLEInstruction *ABI = ABIUnknown;
+AudioHLEInstruction *ABI;
 bool bAudioChanged = false;
-extern bool isMKABI;
+bool gUseMp3 = true;
 extern bool isZeldaABI;
 
 //*****************************************************************************
@@ -85,9 +66,10 @@ extern bool isZeldaABI;
 //*****************************************************************************
 void Audio_Reset()
 {
+	sprintf(cur_audio_ucode, "None");
 	bAudioChanged = false;
-	isMKABI		  = false;
 	isZeldaABI	  = false;
+	isMusyx 	  = false;
 }
 
 //*****************************************************************************
@@ -96,19 +78,70 @@ void Audio_Reset()
 inline void Audio_Ucode_Detect(OSTask * pTask)
 {
 	u8* p_base = g_pu8RamBase + (u32)pTask->t.ucode_data;
-	if (*(u32*)(p_base + 0) != 0x01)
+	
+	u32 v;
+	
+	if (*(u32*)(p_base) != 0x01)
 	{
-		if (*(u32*)(p_base + 0x10) == 0x00000001)
-			ABI = ABIUnknown;
-		else
-			ABI = ABI3;
+		v = *(u32*)(p_base + 0x10);
+		switch (v) {
+		case 0x00000001: /* MusyX v1
+			RogueSquadron, ResidentEvil2, PolarisSnoCross,
+            TheWorldIsNotEnough, RugratsInParis, NBAShowTime,
+            HydroThunder, Tarzan, GauntletLegend, Rush2049 */
+			isMusyx = true;
+			sprintf(cur_audio_ucode, "MusyX v1");
+			break;
+		case 0x1C58126C: /* DonkeyKong */
+			ABI = NAudio_DK;
+			sprintf(cur_audio_ucode, "NAudio (DK)");
+			break;
+		case 0x1AB0140C: /* Conker's Bad Fur Day */
+		case 0x1AE8143C: /* NAudio MP3
+			BanjoTooie, JetForceGemini, MickeySpeedWayUSA, PerfectDark */
+			if (gUseMp3) {
+				ABI = NAudio_MP3;
+				sprintf(cur_audio_ucode, "NAudio MP3");
+				break;
+			}
+		default: /* NAudio */
+			ABI = NAudio;
+			sprintf(cur_audio_ucode, "NAudio");
+			break;
+		}
 	}
 	else
 	{
-		if (*(u32*)(p_base + 0x30) == 0xF0000F00)
-			ABI = ABI1;
-		else
-			ABI = ABI2;
+		if (*(u32*)(p_base + 0x30) == 0xF0000F00) {
+			v = *(u32*)(p_base + 0x28);
+			switch (v) {
+				case 0x1DC8138C: /* GoldenEye */
+				case 0x1E3C1390: /* BlastCorp, DiddyKongRacing */
+					ABI = ABI_GE; 
+					sprintf(cur_audio_ucode, "ABI (GE)");
+					break;
+				default: /* Audio ABI */
+					ABI = ABI_Common;
+					sprintf(cur_audio_ucode, "ABI");
+					break;
+			}
+		} else {
+			v = *(u32*)(p_base + 0x10);
+			switch (v) {
+				case 0x1CD01250: /* F-Zero X */
+					ABI = NEAD_FZ;
+					sprintf(cur_audio_ucode, "NEAD (FZ)");
+					break;
+				case 0x11181350: /* MarioKart, WaveRace (E) */
+					ABI = NEAD_MK;
+					sprintf(cur_audio_ucode, "NEAD (MK)");
+					break;
+				default: /* NEAD */
+					ABI = NEAD;
+					sprintf(cur_audio_ucode, "NEAD");
+					break;
+			}
+		}
 	}
 }
 
@@ -117,7 +150,7 @@ inline void Audio_Ucode_Detect(OSTask * pTask)
 //*****************************************************************************
 void Audio_Ucode()
 {
-	#ifdef DAEDALUS_PROFILE
+#ifdef DAEDALUS_PROFILE
 	DAEDALUS_PROFILE( "HLEMain::Audio_Ucode" );
 #endif
 	OSTask * pTask = (OSTask *)(g_pu8SpMemBase + 0x0FC0);
@@ -130,21 +163,22 @@ void Audio_Ucode()
 	}
 
 	gAudioHLEState.LoopVal = 0;
-	//memset( gAudioHLEState.Segments, 0, sizeof( gAudioHLEState.Segments ) );
+	
+	if (isMusyx) {
+		musyx_v1_task(pTask);
+	} else {
+		u32 * p_alist = (u32 *)(g_pu8RamBase + (u32)pTask->t.data_ptr);
+		u32 ucode_size = (pTask->t.data_size >> 3);
 
-	u32 * p_alist = (u32 *)(g_pu8RamBase + (u32)pTask->t.data_ptr);
-	u32 ucode_size = (pTask->t.data_size >> 3);	//ABI5 can return 0 here!!!
+		while( ucode_size )
+		{
+			AudioHLECommand command;
+			command.cmd0 = *p_alist++;
+			command.cmd1 = *p_alist++;
 
-	while( ucode_size )
-	{
-		AudioHLECommand command;
-		command.cmd0 = *p_alist++;
-		command.cmd1 = *p_alist++;
+			ABI[command.cmd](command);
 
-		ABI[command.cmd](command);
-
-		--ucode_size;
-
-		//printf("%08X %08X\n",command.cmd0,command.cmd1);
+			--ucode_size;
+		}
 	}
 }

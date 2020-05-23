@@ -170,14 +170,15 @@ void RDP_MoveMemLight(u32 light_idx, const N64Light *light);
 // Used to keep track of when we're processing the first display list
 static bool gFirstCall = true;
 
-static u32				gSegments[16] {};
-static RDP_Scissor		scissors {};
-static RDP_GeometryMode gGeometryMode {};
-static DList			gDlistStack {};
-static s32				gDlistStackPointer {-1};
-static u32				gVertexStride	 {};
-static u32				gRDPHalf1		 {};
-static u32				gLastUcodeBase   {};
+extern bool gCPURendering;
+
+static u32				gSegments[16];
+static RDP_Scissor		scissors;
+static RDP_GeometryMode gGeometryMode;
+static DList			gDlistStack;
+static s32				gDlistStackPointer = -1;
+static u32				gVertexStride;
+static u32				gRDPHalf1;
 
        SImageDescriptor g_TI = { G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, 0 };
 static SImageDescriptor g_CI = { G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, 0 };
@@ -245,7 +246,7 @@ u32			gNumInstructionsExecuted = 0;
 //*****************************************************************************
 //
 //*****************************************************************************
-u32 gRDPFrame {}, gAuxAddr {};
+u32 gRDPFrame = 0, gAuxAddr = 0;
 
 extern u32 uViWidth, uViHeight;
 
@@ -326,6 +327,10 @@ void DLParser_DumpVtxInfo(u32 address, u32 v0_idx, u32 num_verts)
 bool DLParser_Initialise()
 {
 	gFirstCall = true;
+	
+	// Resetting number of executed frames
+	gRDPFrame = 0;
+	gCPURendering = true;
 
 	// Reset scissor to default
 	scissors.top = 0;
@@ -425,10 +430,9 @@ static void DLParser_SetCustom( u32 ucode, u32 offset )
 //*****************************************************************************
 void DLParser_InitMicrocode( u32 code_base, u32 code_size, u32 data_base, u32 data_size )
 {
-	u32 ucode {GBIMicrocode_DetectVersion( code_base, code_size, data_base, data_size, &DLParser_SetCustom )};
+	u32 ucode = GBIMicrocode_DetectVersion( code_base, code_size, data_base, data_size, &DLParser_SetCustom );
 
 	gVertexStride  = ucode_stride[ucode];
-	gLastUcodeBase = code_base;
 	gUcodeFunc	   = IS_CUSTOM_UCODE(ucode) ? gCustomInstruction : gNormalInstruction[ucode];
 
 	// Used for fetching ucode names (Debug Only)
@@ -464,7 +468,7 @@ static u32 DLParser_ProcessDList(u32 instruction_limit)
 {
 	MicroCodeCommand command;
 
-	u32 current_instruction_count {};
+	u32 current_instruction_count = 0;
 
 	while(gDlistStackPointer >= 0)
 	{
@@ -526,30 +530,25 @@ u32 DLParser_Process(u32 instruction_limit, DLDebugOutput * debug_output)
 	if(gFirstCall)
 	{
 		CGraphicsContext::Get()->ClearAllSurfaces();
-
 		gFirstCall = false;
+		gRDPOtherMode.L = 0;
+		gRDPOtherMode.H = 0x0CFF;
 	}
 
 	// Update Screen only when something is drawn, otherwise several games ex Army Men will flash or shake.
 	if( g_ROM.GameHacks != CHAMELEON_TWIST_2 ) gGraphicsPlugin->UpdateScreen();
 
-	OSTask * pTask {(OSTask *)(g_pu8SpMemBase + 0x0FC0)};
-	u32 code_base {(u32)pTask->t.ucode & 0x1fffffff};
-	u32 code_size {pTask->t.ucode_size};
-	u32 data_base {(u32)pTask->t.ucode_data & 0x1fffffff};
-	u32 data_size {pTask->t.ucode_data_size};
-	u32 stack_size {pTask->t.dram_stack_size >> 6};
+	OSTask * pTask = (OSTask *)(g_pu8SpMemBase + 0x0FC0);
+	u32 code_base = (u32)pTask->t.ucode & 0x1fffffff;
+	u32 code_size = pTask->t.ucode_size;
+	u32 data_base = (u32)pTask->t.ucode_data & 0x1fffffff;
+	u32 data_size = pTask->t.ucode_data_size;
+	u32 stack_size = pTask->t.dram_stack_size >> 6;
 
-	if ( gLastUcodeBase != code_base )
-	{
-		DLParser_InitMicrocode( code_base, code_size, data_base, data_size );
-	}
+	DLParser_InitMicrocode( code_base, code_size, data_base, data_size );
 
-	//
-	// Not sure what to init this with. We should probably read it from the dmem
-	//
-	gRDPOtherMode.L = 0x00500001;
-	gRDPOtherMode.H = 0;
+	if (g_ROM.GameHacks != QUAKE) gRDPOtherMode.L = 0;
+	if (!g_ROM.KEEP_MODE_H_HACK) gRDPOtherMode.H = 0x0CFF;
 
 	gRDPFrame++;
 
@@ -573,11 +572,10 @@ u32 DLParser_Process(u32 instruction_limit, DLDebugOutput * debug_output)
 	DL_PF("DP: Firing up RDP!");
 #endif
 
-	u32 count {};
+	u32 count;
 
 	if(!gFrameskipActive)
 	{
-		gRenderer->SetVIScales();
 		gRenderer->ResetMatrices(stack_size);
 		gRenderer->Reset();
 		gRenderer->BeginScene();
@@ -607,6 +605,8 @@ u32 DLParser_Process(u32 instruction_limit, DLDebugOutput * debug_output)
 		handler->OnDisplayListComplete();
 #endif
 
+	gCPURendering = false;
+
 	return count;
 }
 
@@ -621,9 +621,9 @@ void MatrixFromN64FixedPoint( Matrix4x4 & mat, u32 address )
 	const f32 fRecip {1.0f / 65536.0f};
 	const N64mat *Imat {(N64mat *)( g_pu8RamBase + address )};
 
-	s16 hi {};
-	s32 tmp {};
-	for (u32 i {}; i < 4; i++)
+	s16 hi;
+	s32 tmp;
+	for (u32 i = 0; i < 4; i++)
 	{
 #if 1	// Crappy compiler.. reordering is to optimize the ASM // Corn
 		tmp = ((Imat->h[i].x << 16) | Imat->l[i].x);
@@ -657,13 +657,13 @@ void RDP_MoveMemLight(u32 light_idx, const N64Light *light)
 	#ifdef DAEDALUS_ENABLE_ASSERTS
 	DAEDALUS_ASSERT( light_idx < 12, "Warning: invalid light # = %d", light_idx );
 	#endif
-	u8 r {light->r};
-	u8 g {light->g};
-	u8 b {light->b};
+	u8 r = light->r;
+	u8 g = light->g;
+	u8 b = light->b;
 
-	s8 dir_x {light->dir_x};
-	s8 dir_y {light->dir_y};
-	s8 dir_z {light->dir_z};
+	s8 dir_x = light->dir_x;
+	s8 dir_y = light->dir_y;
+	s8 dir_z = light->dir_z;
 
 	bool valid = (dir_x | dir_y | dir_z) != 0;
 		#ifdef DAEDALUS_ENABLE_ASSERTS
@@ -704,10 +704,21 @@ void RDP_MoveMemViewport(u32 address)
 	// With D3D we had to ensure that the vp coords are positive, so
 	// we truncated them to 0. This happens a lot, as things
 	// seem to specify the scale as the screen w/2 h/2
-
-	v2 vec_scale( vp->scale_x * 0.25f, vp->scale_y * 0.25f );
-	v2 vec_trans( vp->trans_x * 0.25f, vp->trans_y * 0.25f );
-
+	
+	// Pokemon Stadium sometimes sets weird viewports, discarding those.
+	// This is probably caused by lack of some microcode function implementation.
+	if (g_ROM.GameHacks == POKEMON_STADIUM)
+	{
+		if (vp->scale_x == 200) {
+			return;
+		} else if (vp->scale_x == 112) {
+			return;
+		}
+	}
+	
+	v2 vec_scale( (f32)vp->scale_x * 0.25f, (f32)vp->scale_y * 0.25f );
+	v2 vec_trans( (f32)vp->trans_x * 0.25f, (f32)vp->trans_y * 0.25f );
+	//DBGConsole_Msg(0, "MoveMemViewport: trans (%f, %f), scale(%f, %f)", (f32)vp->trans_x, (f32)vp->trans_y, (f32)vp->scale_x, (f32)vp->scale_y);
 	gRenderer->SetN64Viewport( vec_scale, vec_trans );
 
 #ifdef DAEDALUS_DEBUG_DISPLAYLIST
@@ -885,10 +896,10 @@ void DLParser_SetTImg( MicroCodeCommand command )
 	g_TI.Size		= command.img.siz;
 	g_TI.Width		= command.img.width + 1;
 	g_TI.Address	= RDPSegAddr(command.img.addr) & (MAX_RAM_ADDRESS-1);
-	//g_TI.bpl		= g_TI.Width << g_TI.Size >> 1;
+	//g_TI.bpl		= (g_TI.Width << g_TI.Size) >> 1;
 #ifdef DAEDALUS_DEBUG_DISPLAYLIST
 	DL_PF("    TImg Adr[0x%08x] Format[%s/%s] Width[%d] Pitch[%d] Bytes/line[%d]",
-		g_TI.Address, gFormatNames[g_TI.Format], gSizeNames[g_TI.Size], g_TI.Width, g_TI.GetPitch(), g_TI.Width << g_TI.Size >> 1 );
+		g_TI.Address, gFormatNames[g_TI.Format], gSizeNames[g_TI.Size], g_TI.Width, g_TI.GetPitch(), (g_TI.Width << g_TI.Size) >> 1 );
 		#endif
 }
 
@@ -1209,7 +1220,7 @@ void DLParser_SetCImg( MicroCodeCommand command )
 	g_CI.Size   = command.img.siz;
 	g_CI.Width  = command.img.width + 1;
 	g_CI.Address = RDPSegAddr(command.img.addr) & (MAX_RAM_ADDRESS-1);
-	//g_CI.Bpl		= g_CI.Width << g_CI.Size >> 1;
+	//g_CI.Bpl		= (g_CI.Width << g_CI.Size) >> 1;
 		#ifdef DAEDALUS_DEBUG_DISPLAYLIST
 	DL_PF("    CImg Adr[0x%08x] Format[%s] Size[%s] Width[%d]", RDPSegAddr(command.inst.cmd1), gFormatNames[ g_CI.Format ], gSizeNames[ g_CI.Size ], g_CI.Width);
 	#endif

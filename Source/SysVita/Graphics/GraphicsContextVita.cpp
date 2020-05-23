@@ -19,7 +19,10 @@
 #include "Utility/VolatileMem.h"
 #include "SysVita/UI/Menu.h"
 
-extern void HandleEndOfFrame();
+#include "HLEGraphics/BaseRenderer.h"
+
+extern bool pause_emu;
+bool gWaitRendering = false;
 
 #define MAX_INDEXES 0xFFFF
 uint16_t *gIndexes;
@@ -29,6 +32,9 @@ float *gTexCoordBuffer;
 float *gVertexBufferPtr;
 uint32_t *gColorBufferPtr;
 float *gTexCoordBufferPtr;
+bool new_frame = true;
+
+extern float gamma_val;
 
 class IGraphicsContext : public CGraphicsContext
 {
@@ -123,7 +129,7 @@ void IGraphicsContext::ClearToBlack()
 	glDepthMask(GL_TRUE);
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClearDepth( 1.0f );
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glClear((GLbitfield)(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) );
 }
 
 void IGraphicsContext::ClearZBuffer()
@@ -144,7 +150,7 @@ void IGraphicsContext::ClearColBufferAndDepth(const c32 & colour)
 	glDepthMask(GL_TRUE);
 	glClearDepth( 1.0f );
 	glClearColor( colour.GetRf(), colour.GetGf(), colour.GetBf(), colour.GetAf() );
-	glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+	glClear((GLbitfield)(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) );
 }
 
 void IGraphicsContext::BeginFrame()
@@ -156,18 +162,30 @@ void IGraphicsContext::BeginFrame()
 	gTexCoordBuffer = gTexCoordBufferPtr;
 	vglIndexPointerMapped(gIndexes);
 	
-	CGraphicsContext::Get()->ClearToBlack();
+	if (new_frame) {
+		CGraphicsContext::Get()->ClearToBlack();
+		new_frame = false;
+	}
 }
 
 void IGraphicsContext::EndFrame()
 {
 	glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
 	glScissor( 0, 0, SCR_WIDTH, SCR_HEIGHT);
+	if (gamma_val != 1.0f) gRenderer->DoGamma(gamma_val);
 	DrawInGameMenu();
+	if (gWaitRendering) glFinish();
 }
 
 void IGraphicsContext::UpdateFrame(bool wait_for_vbl)
 {
+	vglStopRendering();
+	new_frame = true;
+	if (pause_emu) {
+		BeginFrame();
+		EndFrame();
+		UpdateFrame(false);
+	}
 }
 
 void IGraphicsContext::SetDebugScreenTarget(ETargetSurface buffer)
@@ -195,7 +213,7 @@ void IGraphicsContext::StoreSaveScreenData()
 void IGraphicsContext::GetScreenSize(u32 * p_width, u32 * p_height) const
 {
 	// Note: Change these if you change SCR_WIDTH/SCR_HEIGHT
-	switch (aspect_ratio) {
+	switch (gAspectRatio) {
 	case RATIO_4_3:
 		*p_width  = 725;
 		*p_height = SCR_HEIGHT;

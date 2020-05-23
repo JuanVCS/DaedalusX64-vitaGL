@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "Utility/RefCounted.h"
 #include "HLEGraphics/DaedalusVtx.h"
 #include "HLEGraphics/TextureInfo.h"
+#include "Debug/DBGConsole.h"
 #include "Graphics/ColourValue.h"
 #include "Utility/Preferences.h"
 
@@ -128,8 +129,9 @@ ALIGNED_TYPE(struct, DaedalusLight, 16)
 	f32		qa;				// Used by MM(GBI2 point light)
 	u32		Pad0;			// Padding
 };
+#ifdef DAEDALUS_PSP
 DAEDALUS_STATIC_ASSERT( sizeof( DaedalusLight ) == 64 );	//Size=64 bytes and order is important or VFPU ASM for PSP will fail
-
+#endif
 // Order here should be the same as in TnLMode
 enum ETnLModeFlags
 {
@@ -251,7 +253,7 @@ public:
 #ifdef DAEDALUS_PSP
 	inline void			SetPrimitiveDepth( u32 z )				{ mPrimDepth = (f32)( ( ( 32767 - z ) << 1) + 1 ); }
 #else
-	inline void			SetPrimitiveDepth( u32 z )				{ mPrimDepth = (f32)(z - 0x4000) / (f32)0x4000;}
+	inline void			SetPrimitiveDepth( u32 z )				{ mPrimDepth = (f32)((int)z - 0x4000) / 16384.0f;}
 #endif
 	inline void			SetPrimitiveLODFraction( f32 f )		{ mPrimLODFraction = f; }
 	inline void			SetPrimitiveColour( c32 colour )		{ mPrimitiveColour = colour; }
@@ -279,11 +281,19 @@ public:
 
 	// Texture stuff
 	virtual void		Draw2DTexture(f32 x0, f32 y0, f32 x1, f32 y1, f32 u0, f32 v0, f32 u1, f32 v1, const CNativeTexture * texture) = 0;
-	virtual void		Draw2DTextureR(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2, f32 x3, f32 y3, f32 s, f32 t) = 0;
+	virtual void		Draw2DTextureR(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2, f32 x3, f32 y3, f32 s, f32 t, const CNativeTexture * texture) = 0;
 
 	// Viewport stuff
 	void				SetN64Viewport( const v2 & scale, const v2 & trans );
 	void				SetScissor( u32 x0, u32 y0, u32 x1, u32 y1 );
+	
+	void				ForceViewport(float w, float h);
+#ifdef DAEDALUS_VITA
+	void				SetNegativeViewport();
+	void				SetPositiveViewport();
+	
+	virtual void		DoGamma(float gamma) = 0;
+#endif
 
 #ifdef DAEDALUS_DEBUG_DISPLAYLIST
 	void				PrintActive();
@@ -341,6 +351,9 @@ public:
 	virtual void 		ResetDebugState()						{}
 #endif
 
+	inline float		LightN64ToScreenX(float x) const		{ return x * mN64ToScreenScale.x; }
+	inline float		LightN64ToScreenY(float y) const		{ return y * mN64ToScreenScale.y; }
+	
 	inline float		N64ToScreenX(float x) const				{ return x * mN64ToScreenScale.x + mN64ToScreenTranslate.x; }
 	inline float		N64ToScreenY(float y) const				{ return y * mN64ToScreenScale.y + mN64ToScreenTranslate.y; }
 
@@ -376,20 +389,25 @@ protected:
 
 	inline void ScaleN64ToScreen( const v2 & n64_coords, v2 & answ ) const
 	{
-		answ.x = roundf( roundf( n64_coords.x ) * mN64ToScreenScale.x );
-		answ.y = roundf( roundf( n64_coords.y ) * mN64ToScreenScale.y );
+		answ.x = roundf( LightN64ToScreenX( roundf( n64_coords.x ) ) );
+		answ.y = roundf( LightN64ToScreenY( roundf( n64_coords.y ) ) );
 	}
-
+#ifdef DAEDALUS_VITA
+	virtual void		RenderTriangles( uint32_t *colors, u32 num_vertices, bool disable_zbuffer ) = 0;
+#else
 	virtual void		RenderTriangles( DaedalusVtx * p_vertices, u32 num_vertices, bool disable_zbuffer ) = 0;
-
+#endif
 	void 				TestVFPUVerts( u32 v0, u32 num, const FiddledVtx * verts, const Matrix4x4 & mat_world );
 	template< bool FogEnable, int TextureMode >
 	void ProcessVerts( u32 v0, u32 num, const FiddledVtx * verts, const Matrix4x4 & mat_world );
 
 
 	void				PrepareTrisClipped( TempVerts * temp_verts ) const;
+#ifdef DAEDALUS_VITA
+	uint32_t			PrepareTrisUnclipped( uint32_t **clr );
+#else
 	void				PrepareTrisUnclipped( TempVerts * temp_verts ) const;
-
+#endif
 	v3					LightVert( const v3 & norm ) const;
 	v3					LightPointVert( const v4 & w ) const;
 

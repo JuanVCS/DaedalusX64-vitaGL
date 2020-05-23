@@ -42,7 +42,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "Utility/IO.h"
 #include "Utility/Profiler.h"
 
-static std::vector<u8>		gTexelBuffer {};
+static std::vector<u8>		gTexelBuffer;
 static NativePf8888			gPaletteBuffer[ 256 ];
 
 // NB: On the PSP we generate a lightweight hash of the texture data before
@@ -50,11 +50,8 @@ static NativePf8888			gPaletteBuffer[ 256 ];
 // On other platforms (e.g. OSX) updating textures is relatively inexpensive, so
 // we just skip the hashing process entirely, and update textures every frame
 // regardless of whether they've actually changed.
-#ifdef DAEDALUS_PSP
-static const bool kUpdateTexturesEveryFrame = false;
-#else
-static const bool kUpdateTexturesEveryFrame = true;
-#endif
+ bool kUpdateTexturesEveryFrame = false;
+
 
 
 #if defined(DAEDALUS_GL) || defined(DAEDALUS_ACCURATE_TMEM) || defined(DAEDALUS_VITA)
@@ -120,8 +117,8 @@ static bool GenerateTexels(void ** p_texels,
 	NativePf8888 *	palette = IsTextureFormatPalettised( texture_format ) ? gPaletteBuffer : nullptr;
 
 #ifdef DAEDALUS_ACCURATE_TMEM
-	// NB: if line is 0, it implies this is a direct load from ram (e.g. DLParser_Sprite2DDraw etc)
-	// This check isn't robust enough, SSV set ti.Line == 0 in game without calling Sprite2D
+	// NB: if line is 0, it implies this is a direct load from ram (e.g. S2DEX and Sprite2D ucodes)
+	// Some games set ti.Line = 0 on LoadTile, ex SSV and Paper Mario
 	if (ti.GetLine() > 0)
 	{
 		if (ConvertTile(ti, texels, palette, texture_format, pitch))
@@ -231,8 +228,8 @@ bool CachedTexture::Initialise()
 	#ifdef DAEDALUS_ENABLE_ASSERTS
 	DAEDALUS_ASSERT_Q(mpTexture == nullptr);
 	#endif
-	u32 width  {mTextureInfo.GetWidth()};
-	u32 height {mTextureInfo.GetHeight()};
+	u32 width  = mTextureInfo.GetWidth();
+	u32 height = mTextureInfo.GetHeight();
 
 	if (mTextureInfo.GetEmulateMirrorS()) width  *= 2;
 	if (mTextureInfo.GetEmulateMirrorT()) height *= 2;
@@ -313,15 +310,16 @@ bool CachedTexture::HasExpired() const
 		{
 			//Hack to make WONDER PROJECT J2 work (need to reload some textures every frame!) //Corn
 			if( (g_ROM.GameHacks == WONDER_PROJECTJ2) && (mTextureInfo.GetTLutFormat() == kTT_RGBA16) && (mTextureInfo.GetSize() == G_IM_SIZ_8b) ) return true;
-
+#ifndef DAEDALUS_VITA
 			//Hack for Worms Armageddon
 			if( (g_ROM.GameHacks == WORMS_ARMAGEDDON) && (mTextureInfo.GetSize() == G_IM_SIZ_8b) && (mTextureContentsHash != mTextureInfo.GenerateHashValue()) ) return true;
 
 			//Hack for Zelda OOT & MM text (only needed if there is not a general hash check) //Corn
 			if( g_ROM.ZELDA_HACK && (mTextureInfo.GetSize() == G_IM_SIZ_4b) && mTextureContentsHash != mTextureInfo.GenerateHashValue() ) return true;
-
+#else
 			//Check if texture has changed
-			//if( mTextureContentsHash != mTextureInfo.GenerateHashValue() ) return true;
+			if( mTextureContentsHash != mTextureInfo.GenerateHashValue() ) return true;
+#endif
 		}
 	}
 

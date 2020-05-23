@@ -53,7 +53,8 @@ class CCodeGeneratorARM : public CCodeGenerator, public CAssemblyWriterARM
 		virtual void				GenerateIndirectExitCode( u32 num_instructions, CIndirectExitMap * p_map );
 
 		virtual void				GenerateBranchHandler( CJumpLocation branch_handler_jump, RegisterSnapshotHandle snapshot );
-
+		
+		virtual CJumpLocation		GenerateInterpOpCode( const STraceEntry& ti, bool branch_delay_slot, const SBranchDetails * p_branch, CJumpLocation * p_branch_jump);
 		virtual CJumpLocation		GenerateOpCode( const STraceEntry& ti, bool branch_delay_slot, const SBranchDetails * p_branch, CJumpLocation * p_branch_jump);
 
 		virtual CJumpLocation		ExecuteNativeFunction( CCodeLabel speed_hack, bool check_return );
@@ -72,9 +73,10 @@ class CCodeGeneratorARM : public CCodeGenerator, public CAssemblyWriterARM
 				CJumpLocation		GenerateBranchAlways( CCodeLabel target );
 				CJumpLocation		GenerateBranchIfSet( const u32 * p_var, CCodeLabel target );
 				CJumpLocation		GenerateBranchIfNotSet( const u32 * p_var, CCodeLabel target );
-				CJumpLocation		GenerateBranchIfEqual( const u32 * p_var, u32 value, CCodeLabel target );
-				CJumpLocation		GenerateBranchIfNotEqual( const u32 * p_var, u32 value, CCodeLabel target );
-				CJumpLocation		GenerateBranchIfNotEqual( EArmReg reg_a, u32 value, CCodeLabel target );
+				CJumpLocation		GenerateBranchIfEqual32( const u32 * p_var, u32 value, CCodeLabel target );
+				CJumpLocation		GenerateBranchIfEqual8( const u32 * p_var, u8 value, CCodeLabel target );
+				CJumpLocation		GenerateBranchIfNotEqual32( const u32 * p_var, u32 value, CCodeLabel target );
+				CJumpLocation		GenerateBranchIfNotEqual8( const u32 * p_var, u8 value, CCodeLabel target );
 
 				void				GenerateGenericR4300( OpCode op_code, CPU_Instruction p_instruction );
 
@@ -92,16 +94,20 @@ class CCodeGeneratorARM : public CCodeGenerator, public CAssemblyWriterARM
 				void	GenerateStore( EN64Reg base, s16 offset, u8 twiddle, u8 bits, void* p_write_memory );
 				bool	GenerateSW(EN64Reg rt, EN64Reg base, s16 offset );
 				bool	GenerateSWC1( u32 ft, EN64Reg base, s16 offset );
+				bool	GenerateSDC1( u32 ft, EN64Reg base, s16 offset );
 				bool	GenerateSH( EN64Reg rt, EN64Reg base, s16 offset );
+				bool	GenerateSD( EN64Reg rt, EN64Reg base, s16 offset );
 				bool	GenerateSB( EN64Reg rt, EN64Reg base, s16 offset );
 
 				void	GenerateLoad( EN64Reg base, s16 offset, u8 twiddle, u8 bits, bool is_signed, void* p_read_memory );
-				bool	GenerateLW(EN64Reg rt, EN64Reg base, s16 offset );
-				bool	GenerateLB(EN64Reg rt, EN64Reg base, s16 offset );
-				bool	GenerateLBU(EN64Reg rt, EN64Reg base, s16 offset );
-				bool	GenerateLH(EN64Reg rt, EN64Reg base, s16 offset );
-				bool	GenerateLHU(EN64Reg rt, EN64Reg base, s16 offset );
-				bool	GenerateLWC1(u32 ft, EN64Reg base, s16 offset );
+				bool	GenerateLW( EN64Reg rt, EN64Reg base, s16 offset );
+				bool	GenerateLD( EN64Reg rt, EN64Reg base, s16 offset );
+				bool	GenerateLB( EN64Reg rt, EN64Reg base, s16 offset );
+				bool	GenerateLBU( EN64Reg rt, EN64Reg base, s16 offset );
+				bool	GenerateLH( EN64Reg rt, EN64Reg base, s16 offset );
+				bool	GenerateLHU( EN64Reg rt, EN64Reg base, s16 offset );
+				bool	GenerateLWC1( u32 ft, EN64Reg base, s16 offset );
+				bool	GenerateLDC1( u32 ft, EN64Reg base, s16 offset );
 				void	GenerateLUI( EN64Reg rt, s16 immediate );
 
 				void	GenerateADDIU( EN64Reg rt, EN64Reg rs, s16 immediate );
@@ -110,7 +116,12 @@ class CCodeGeneratorARM : public CCodeGenerator, public CAssemblyWriterARM
 				void	GenerateXORI( EN64Reg rt, EN64Reg rs, u16 immediate );
 				void	GenerateSLTI( EN64Reg rt, EN64Reg rs, s16 immediate, bool is_unsigned );
 
+				void	GenerateDADDIU( EN64Reg rt, EN64Reg rs, s16 immediate );
+				void	GenerateDADDU( EN64Reg rd, EN64Reg rs, EN64Reg rt );
+				void	GenerateDSUBU( EN64Reg rd, EN64Reg rs, EN64Reg rt );
+
 				void	GenerateJAL( u32 address );
+				void	GenerateJALR( EN64Reg rs, EN64Reg rd, u32 address, const SBranchDetails * p_branch, CJumpLocation * p_branch_jump );
 
 				//Special Op
 				void	GenerateMFC1( EN64Reg rt, u32 fs );
@@ -121,10 +132,26 @@ class CCodeGeneratorARM : public CCodeGenerator, public CAssemblyWriterARM
 				void	GenerateSLL( EN64Reg rd, EN64Reg rt, u32 sa );
 				void	GenerateSRL( EN64Reg rd, EN64Reg rt, u32 sa );
 				void	GenerateSRA( EN64Reg rd, EN64Reg rt, u32 sa );
+				void	GenerateSLLV( EN64Reg rd, EN64Reg rs, EN64Reg rt );
+				void	GenerateSRLV( EN64Reg rd, EN64Reg rs, EN64Reg rt );
+				void	GenerateSRAV( EN64Reg rd, EN64Reg rs, EN64Reg rt );
+
+				void	GenerateDSLL32( EN64Reg rd, EN64Reg rt, u32 sa );
+				void	GenerateDSRL32( EN64Reg rd, EN64Reg rt, u32 sa );
+				void	GenerateDSRA32( EN64Reg rd, EN64Reg rt, u32 sa );
+
+				void	GenerateDSLL( EN64Reg rd, EN64Reg rt, u32 sa );
+				void	GenerateDSRL( EN64Reg rd, EN64Reg rt, u32 sa );
+				void	GenerateDSRA( EN64Reg rd, EN64Reg rt, u32 sa );
+
+				void	GenerateDSLLV( EN64Reg rd, EN64Reg rs, EN64Reg rt );
+				void	GenerateDSRLV( EN64Reg rd, EN64Reg rs, EN64Reg rt );
+				void	GenerateDSRAV( EN64Reg rd, EN64Reg rs, EN64Reg rt );
 
 				void	GenerateOR( EN64Reg rd, EN64Reg rs, EN64Reg rt );
 				void	GenerateAND( EN64Reg rd, EN64Reg rs, EN64Reg rt );
 				void	GenerateXOR( EN64Reg rd, EN64Reg rs, EN64Reg rt );
+				void	GenerateNOR( EN64Reg rd, EN64Reg rs, EN64Reg rt );
 
 				void	GenerateJR( EN64Reg rs, const SBranchDetails * p_branch, CJumpLocation * p_branch_jump );
 
@@ -132,6 +159,8 @@ class CCodeGeneratorARM : public CCodeGenerator, public CAssemblyWriterARM
 				void	GenerateSUBU( EN64Reg rd, EN64Reg rs, EN64Reg rt );
 
 				void	GenerateMULT( EN64Reg rs, EN64Reg rt, bool is_unsigned );
+
+				void	GenerateDMULT( EN64Reg rs, EN64Reg rt );
 
 				void	GenerateDIV( EN64Reg rs, EN64Reg rt );
 				void	GenerateDIVU( EN64Reg rs, EN64Reg rt );
@@ -146,6 +175,10 @@ class CCodeGeneratorARM : public CCodeGenerator, public CAssemblyWriterARM
 				//Branch
 				void	GenerateBEQ( EN64Reg rs, EN64Reg rt, const SBranchDetails * p_branch, CJumpLocation * p_branch_jump );
 				void	GenerateBNE( EN64Reg rs, EN64Reg rt, const SBranchDetails * p_branch, CJumpLocation * p_branch_jump );
+				void 	GenerateBLEZ( EN64Reg rs, const SBranchDetails * p_branch, CJumpLocation * p_branch_jump );
+				void 	GenerateBGEZ( EN64Reg rs, const SBranchDetails * p_branch, CJumpLocation * p_branch_jump );
+				void 	GenerateBLTZ( EN64Reg rs, const SBranchDetails * p_branch, CJumpLocation * p_branch_jump );
+				void 	GenerateBGTZ( EN64Reg rs, const SBranchDetails * p_branch, CJumpLocation * p_branch_jump );
 
 				// CoPro1
 				void	GenerateADD_S( u32 fd, u32 fs, u32 ft );
@@ -153,5 +186,24 @@ class CCodeGeneratorARM : public CCodeGenerator, public CAssemblyWriterARM
 				void	GenerateMUL_S( u32 fd, u32 fs, u32 ft );
 				void	GenerateDIV_S( u32 fd, u32 fs, u32 ft );
 				void	GenerateSQRT_S( u32 fd, u32 fs );
-				void	GenerateCMP_S( u32 fs, u32 ft, EArmCond cond );
+				void	GenerateABS_S( u32 fd, u32 fs );
+				void	GenerateMOV_S( u32 fd, u32 fs );
+				void	GenerateNEG_S( u32 fd, u32 fs );
+				void	GenerateTRUNC_W_S( u32 fd, u32 fs );
+				void	GenerateCVT_W_S( u32 fd, u32 fs );
+				void	GenerateCVT_D_S( u32 fd, u32 fs );
+				void	GenerateCMP_S( u32 fs, u32 ft, EArmCond cond, u8 E );
+
+				void	GenerateADD_D( u32 fd, u32 fs, u32 ft );
+				void	GenerateSUB_D( u32 fd, u32 fs, u32 ft );
+				void	GenerateMUL_D( u32 fd, u32 fs, u32 ft );
+				void	GenerateDIV_D( u32 fd, u32 fs, u32 ft );
+				void	GenerateSQRT_D( u32 fd, u32 fs );
+				void	GenerateABS_D( u32 fd, u32 fs );
+				void	GenerateMOV_D( u32 fd, u32 fs );
+				void	GenerateNEG_D( u32 fd, u32 fs );
+				void	GenerateTRUNC_W_D( u32 fd, u32 fs );
+				void	GenerateCVT_W_D( u32 fd, u32 fs );
+				void	GenerateCVT_S_D( u32 fd, u32 fs );
+				void	GenerateCMP_D( u32 fs, u32 ft, EArmCond cond, u8 E );
 };

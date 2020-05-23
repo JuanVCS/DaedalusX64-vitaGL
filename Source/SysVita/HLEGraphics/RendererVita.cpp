@@ -8,6 +8,7 @@
 #include "Combiner/RenderSettings.h"
 #include "Core/ROM.h"
 #include "Debug/Dump.h"
+#include "Debug/DBGConsole.h"
 #include "Graphics/GraphicsContext.h"
 #include "Graphics/NativeTexture.h"
 #include "HLEGraphics/CachedTexture.h"
@@ -19,12 +20,16 @@
 #include "Utility/IO.h"
 #include "Utility/Profiler.h"
 
+#define NORMALIZE_C1842XX(x) ((x) > 16.5f ? ((x) / ((x) / 16.0f)) : (x))
+
 BaseRenderer *gRenderer    = nullptr;
 RendererVita  *gRendererVita = nullptr;
 
 extern float *gVertexBuffer;
 extern uint32_t *gColorBuffer;
 extern float *gTexCoordBuffer;
+
+bool gUseMipmaps = false;
 
 struct ScePspFMatrix4
 {
@@ -49,115 +54,104 @@ static void InitBlenderMode()
 	u32 blendmode     = gRDPOtherMode.blender;
 
 	// NB: If we're running in 1cycle mode, ignore the 2nd cycle.
-	u32 active_mode = (cycle_type == CYCLE_2CYCLE) ? blendmode : (blendmode & 0xcccc);
-
-	enum BlendType
-	{
-		kBlendModeOpaque,
-		kBlendModeAlphaTrans,
-		kBlendModeFade,
-	};
-	BlendType type = kBlendModeOpaque;
-
-	// FIXME(strmnnrmn): lots of these need fog!
+	u32 active_mode = (cycle_type == CYCLE_2CYCLE) ? blendmode : (blendmode & 0xCCCC);
+	
+	if (alpha_cvg_sel && (gRDPOtherMode.L & 0x7000) != 0x7000) {
+		switch (active_mode) {
+		case 0x4055: // Mario Golf
+		case 0x5055: // Paper Mario Intro
+			glBlendFunc(GL_ZERO, GL_ONE);
+			glEnable(GL_BLEND);
+			break;
+		default:
+			glDisable(GL_BLEND);
+		}
+		return;
+	}
 
 	switch (active_mode)
 	{
-	case 0x0040: // In * AIn + Mem * 1-A
-		// MarioKart (spinning logo).
-		type = kBlendModeAlphaTrans;
-		break;
-	case 0x0050: // In * AIn + Mem * 1-A | In * AIn + Mem * 1-A
-		// Extreme-G.
-		type = kBlendModeAlphaTrans;
-		break;
-	case 0x0440: // In * AFog + Mem * 1-A
-		// Bomberman64. alpha_cvg_sel: 1 cvg_x_alpha: 1
-		type = kBlendModeAlphaTrans;
-		break;
-	case 0x04d0: // In * AFog + Fog * 1-A | In * AIn + Mem * 1-A
-		// Conker.
-		type = kBlendModeAlphaTrans;
-		break;
-	case 0x0150: // In * AIn + Mem * 1-A | In * AFog + Mem * 1-A
-		// Spiderman.
-		type = kBlendModeAlphaTrans;
-		break;
-	case 0x0c08: // In * 0 + In * 1
-		// MarioKart (spinning logo)
-		// This blend mode doesn't use the alpha value
-		type = kBlendModeOpaque;
-		break;
-	case 0x0c18: // In * 0 + In * 1 | In * AIn + Mem * 1-A
-		// StarFox main menu.
-		type = kBlendModeAlphaTrans;
-		break;
-	case 0x0c40: // In * 0 + Mem * 1-A
-		// Extreme-G.
-		type = kBlendModeFade;
-		break;
-	case 0x0f0a: // In * 0 + In * 1 | In * 0 + In * 1
-		// Zelda OoT.
-		type = kBlendModeOpaque;
-		break;
-	case 0x4c40: // Mem * 0 + Mem * 1-A
-		//Waverace - alpha_cvg_sel: 0 cvg_x_alpha: 1
-		type = kBlendModeFade;
-		break;
-	case 0x8410: // Bl * AFog + In * 1-A | In * AIn + Mem * 1-A
-		// Paper Mario.
-		type = kBlendModeAlphaTrans;
-		break;
-	case 0xc410: // Fog * AFog + In * 1-A | In * AIn + Mem * 1-A
-		// Donald Duck (Dust)
-		type = kBlendModeAlphaTrans;
-		break;
-	case 0xc440: // Fog * AFog + Mem * 1-A
-		// Banjo Kazooie
-		// Banjo Tooie sun glare
-		// FIXME: blends fog over existing?
-		type = kBlendModeAlphaTrans;
-		break;
-	case 0xc800: // Fog * AShade + In * 1-A
-		//Bomberman64. alpha_cvg_sel: 0 cvg_x_alpha: 1
-		type = kBlendModeOpaque;
-		break;
-	case 0xc810: // Fog * AShade + In * 1-A | In * AIn + Mem * 1-A
-		// AeroGauge (ingame)
-		type = kBlendModeAlphaTrans;
-		break;
-	// case 0x0321: // In * 0 + Bl * AMem
-	// 	// Hmm - not sure about what this is doing. Zelda OoT pause screen.
-	// 	type = kBlendModeAlphaTrans;
-	// 	break;
-
-	default:
-#ifdef DAEDALUS_DEBUG_DISPLAYLIST
-		DebugBlender( cycle_type, active_mode, alpha_cvg_sel, cvg_x_alpha );
-		DL_PF( "		 Blend: SRCALPHA/INVSRCALPHA (default: 0x%04x)", active_mode );
-#endif
-		break;
-	}
-
-	// NB: we only have alpha in the blender is alpha_cvg_sel is 0 or cvg_x_alpha is 1.
-	bool have_alpha = !alpha_cvg_sel || cvg_x_alpha;
-
-	if (type == kBlendModeAlphaTrans && !have_alpha)
-		type = kBlendModeOpaque;
-
-	switch (type)
-	{
-	case kBlendModeOpaque:
+	case 0x0382: // Mace objects
+	case 0x0091: // Mace special blend mode
+	case 0x0C08: // 1080 sky
+	case 0x0F0A: // DK64 blueprints
+	case 0x0302: // Bomberman 2 special blend mode
+	case 0xA500: // Sin and Punishment
+	case 0xCB02: // Battlezone
+	case 0xC800: // Conker's Bad Fur Day
+	case 0x07C2: // ISS 64
+	case 0x00C0: // ISS 64
+	case 0xC302: // ISS 64
+	case 0xC702: // Donald Duck: Quack Attack
+	case 0xFA00: // Bomberman second attack
+	case 0x0010: // Diddy Kong rare logo
 		glDisable(GL_BLEND);
 		break;
-	case kBlendModeAlphaTrans:
-		glBlendEquation(GL_FUNC_ADD);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	case 0x55F0: // Bust-A-Move 3 DX
+		glBlendFunc(GL_ONE, GL_SRC_ALPHA);
 		glEnable(GL_BLEND);
 		break;
-	case kBlendModeFade:
-		glBlendEquation(GL_FUNC_ADD);
+	case 0x0F1A:
+		if (cycle_type == CYCLE_1CYCLE)
+			glDisable(GL_BLEND);
+		else {
+			glBlendFunc(GL_ZERO, GL_ONE);
+			glEnable(GL_BLEND);
+		}
+		break;
+	case 0x0448: // Space Invaders
+	case 0x0554:
+		glBlendFunc(GL_ONE, GL_ONE);
+		glEnable(GL_BLEND);
+		break;
+	case 0xC712: // Pokemon Stadium
+	case 0xAF50: // Zelda: MM
+	case 0x0F5A: // Zelda: MM
+	case 0x0FA5:
+	case 0x5055: // Paper Mario intro
+		glBlendFunc(GL_ZERO, GL_ONE);
+		glEnable(GL_BLEND);
+		break;
+	case 0x5F50:
+	case 0x0C40: // Extreme-G
 		glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
+		glEnable(GL_BLEND);
+		break;
+	case 0xF550:
+	case 0x0150: // Spiderman
+	case 0x0550: // Bomberman 64
+	case 0x0D18:
+	case 0x0040: // F-Zero X
+	case 0xC810: // AeroGauge
+	case 0x0C18: // StarFox 64 main menu
+	case 0x0050:
+	case 0x0051:
+	case 0x0055:
+	case 0xC440: // Banjo-Kazooie / Banjo-Tooie
+	case 0x0321:
+	case 0xC410: // Donald Duck: Quack Attack dust
+	case 0x8410: // Paper Mario
+		if (!(!alpha_cvg_sel || cvg_x_alpha)) glDisable(GL_BLEND);
+		else {
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glEnable(GL_BLEND);
+		}
+		break;
+	case 0xC912: // 40 Winks
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+		glEnable(GL_BLEND);
+		break;
+	case 0x0C19:
+	case 0xC811:
+		glBlendFunc(GL_SRC_ALPHA, GL_DST_ALPHA);
+		glEnable(GL_BLEND);
+		break;
+	case 0x5000: // V8 explosions
+		glBlendFunc(GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA);
+		glEnable(GL_BLEND);
+		break;
+	default:
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		glEnable(GL_BLEND);
 		break;
 	}
@@ -213,7 +207,6 @@ void RendererVita::RestoreRenderStates()
 	
 	glEnable(GL_SCISSOR_TEST);
 	
-	glBlendEquation(GL_FUNC_ADD);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	glDisable( GL_BLEND );
@@ -281,24 +274,7 @@ RendererVita::SBlendStateEntry RendererVita::LookupBlendState( u64 mux, bool two
 	return entry;
 }
 
-void RendererVita::DrawPrimitives(DaedalusVtx * p_vertices, u32 num_vertices, u32 triangle_mode)
-{
-	glEnableClientState(GL_COLOR_ARRAY);
-	float *vtx_ptr = gVertexBuffer;
-	for (uint32_t i = 0; i < num_vertices; i++) {
-		gVertexBuffer[0] = p_vertices[i].Position.x;
-		gVertexBuffer[1] = p_vertices[i].Position.y;
-		gVertexBuffer[2] = p_vertices[i].Position.z;
-		gColorBuffer[i] = p_vertices[i].Colour.GetColour();
-		gVertexBuffer += 3;
-	}
-	vglVertexPointerMapped(vtx_ptr);
-	vglColorPointerMapped(GL_UNSIGNED_BYTE, gColorBuffer);
-	vglDrawObjects(triangle_mode, num_vertices, GL_TRUE);
-	gColorBuffer += num_vertices;
-}
-
-void RendererVita::RenderUsingRenderSettings( const CBlendStates * states, DaedalusVtx * p_vertices, u32 num_vertices, u32 triangle_mode)
+void RendererVita::RenderUsingRenderSettings( const CBlendStates * states, u32 * p_vertices, u32 num_vertices, u32 triangle_mode, bool is_3d)
 {
 	const CAlphaRenderSettings *	alpha_settings( states->GetAlphaSettings() );
 
@@ -309,27 +285,12 @@ void RendererVita::RenderUsingRenderSettings( const CBlendStates * states, Daeda
 	state.PrimitiveColour = mPrimitiveColour;
 	state.EnvironmentColour = mEnvColour;
 
-	//Avoid copying vertices twice if we already save a copy to render fog //Corn
-	/*DaedalusVtx * p_FogVtx( mVtx_Save );
-	if( mTnL.Flags.Fog )
+	if( states->GetNumStates() > 1 )
 	{
-		p_FogVtx = static_cast<DaedalusVtx *>(malloc(num_vertices * sizeof(DaedalusVtx)));
-		memcpy( p_FogVtx, p_vertices, num_vertices * sizeof( DaedalusVtx ) );
+		memcpy( mVtx_Save, p_vertices, num_vertices * sizeof( u32 ) );
 	}
-	else if( states->GetNumStates() > 1 )
-	{
-		memcpy( mVtx_Save, p_vertices, num_vertices * sizeof( DaedalusVtx ) );
-	}*/
 	
 	glEnableClientState(GL_COLOR_ARRAY);
-	float *vtx_ptr = gVertexBuffer;
-	for (uint32_t i = 0; i < num_vertices; i++) {
-		gVertexBuffer[0] = p_vertices[i].Position.x;
-		gVertexBuffer[1] = p_vertices[i].Position.y;
-		gVertexBuffer[2] = p_vertices[i].Position.z;
-		gVertexBuffer += 3;
-	}
-	vglVertexPointerMapped(vtx_ptr);
 
 	for( u32 i {}; i < states->GetNumStates(); ++i )
 	{
@@ -345,11 +306,12 @@ void RendererVita::RenderUsingRenderSettings( const CBlendStates * states, Daeda
 		settings->Apply( install_texture0 || install_texture1, state, out );
 		alpha_settings->Apply( install_texture0 || install_texture1, state, out );
 
-		// TODO: this nobbles the existing diffuse colour on each pass. Need to use a second buffer...
-		/*if( i > 0 )
+		if( i > 0 )
 		{
-			memcpy( p_vertices, p_FogVtx, num_vertices * sizeof( DaedalusVtx ) );
-		}*/
+			memcpy( gColorBuffer, mVtx_Save, num_vertices * sizeof( u32 ) );
+			p_vertices = gColorBuffer;
+			gColorBuffer += num_vertices;
+		}
 
 		if(out.VertexExpressionRGB != nullptr)
 		{
@@ -362,7 +324,7 @@ void RendererVita::RenderUsingRenderSettings( const CBlendStates * states, Daeda
 
 		bool installed_texture {false};
 
-		u32 texture_idx {};
+		u32 texture_idx;
 
 		if(install_texture0 || install_texture1)
 		{
@@ -396,7 +358,7 @@ void RendererVita::RenderUsingRenderSettings( const CBlendStates * states, Daeda
 				texture_idx = install_texture1;
 
 				// NOTE: Rinnegatamante 15/04/20
-				// Technically we calculate this on DrawTriangles, is it enough?
+				// Technically we calculate this on DrawTriangles, is it enough? Can tex1 and tex0 be of different sizes?
 				
 				/*const CNativeTexture * texture1 = mBoundTexture[ 1 ];
 
@@ -433,6 +395,7 @@ void RendererVita::RenderUsingRenderSettings( const CBlendStates * states, Daeda
 			if(texture != nullptr)
 			{
 				texture->InstallTexture();
+				if (is_3d && gUseMipmaps) texture->GenerateMipmaps();
 				installed_texture = true;
 			}
 		}
@@ -445,27 +408,17 @@ void RendererVita::RenderUsingRenderSettings( const CBlendStates * states, Daeda
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, mTexWrap[texture_idx].v);
 		}
 		
-		for (uint32_t i = 0; i < num_vertices; i++) {
-			gColorBuffer[i] = p_vertices[i].Colour.GetColour();
-		}
-		vglColorPointerMapped(GL_UNSIGNED_BYTE, gColorBuffer);
-		gColorBuffer += num_vertices;
-		
+		glEnableClientState(GL_COLOR_ARRAY);
+		vglColorPointerMapped(GL_UNSIGNED_BYTE, p_vertices);	
 		vglDrawObjects(triangle_mode, num_vertices, GL_TRUE);
-
-		/*if ( mTnL.Flags.Fog )
-		{
-			RenderFog( p_FogVtx, num_vertices, triangle_mode, render_flags );
-		}*/
 	}
 }
 
 
-void RendererVita::RenderUsingCurrentBlendMode(const float (&mat_project)[16], DaedalusVtx * p_vertices, u32 num_vertices, u32 triangle_mode, bool disable_zbuffer )
+void RendererVita::RenderUsingCurrentBlendMode(const float (&mat_project)[16], uint32_t *p_vertices, u32 num_vertices, u32 triangle_mode, bool disable_zbuffer, bool is_3d)
 {
 	glMatrixMode(GL_PROJECTION);
 	glLoadMatrixf((float*)mat_project);
-	if (g_ROM.PROJ_HACK && mat_project == gProjection.m) glScalef(1, -1, 1);
 	
 	if ( disable_zbuffer )
 	{
@@ -485,7 +438,7 @@ void RendererVita::RenderUsingCurrentBlendMode(const float (&mat_project)[16], D
 		}
 		
 		// Enable or Disable ZBuffer test
-		if ( (mTnL.Flags.Zbuffer & gRDPOtherMode.z_cmp) | gRDPOtherMode.z_upd )
+		if ((mTnL.Flags.Zbuffer && gRDPOtherMode.z_cmp) || gRDPOtherMode.z_upd)
 		{
 			glEnable(GL_DEPTH_TEST);
 		}
@@ -494,15 +447,17 @@ void RendererVita::RenderUsingCurrentBlendMode(const float (&mat_project)[16], D
 			glDisable(GL_DEPTH_TEST);
 		}
 
-		glDepthMask( gRDPOtherMode.z_upd ? GL_TRUE : GL_FALSE );
+		glDepthMask(gRDPOtherMode.z_upd ? GL_TRUE : GL_FALSE );
 	}
+	
+	u32 cycle_mode = gRDPOtherMode.cycle_type;
 	
 	// Initiate Texture Filter
 	//
 	// G_TF_AVERAGE : 1, G_TF_BILERP : 2 (linear)
 	// G_TF_POINT   : 0 (nearest)
 	//
-	if( (gRDPOtherMode.text_filt != G_TF_POINT) || (gGlobalPreferences.ForceLinearFilter) )
+	if (((gRDPOtherMode.text_filt != G_TF_POINT) && cycle_mode != CYCLE_COPY) || (gGlobalPreferences.ForceLinearFilter))
 	{
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
@@ -513,13 +468,20 @@ void RendererVita::RenderUsingCurrentBlendMode(const float (&mat_project)[16], D
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
 	}
 	
-	u32 cycle_mode = gRDPOtherMode.cycle_type;
-	
 	// Initiate Blender
 	//
 	if(cycle_mode < CYCLE_COPY && gRDPOtherMode.force_bl)
 	{
 		InitBlenderMode();
+	}
+	else if (gRDPOtherMode.clr_on_cvg)
+	{
+		if ((cycle_mode == CYCLE_1CYCLE && gRDPOtherMode.c1_m2a == 1) ||
+		    (cycle_mode == CYCLE_2CYCLE && gRDPOtherMode.c2_m2a == 1)) {
+			glBlendFunc(GL_ZERO, GL_ONE);
+			glEnable(GL_BLEND);
+		} else
+			glDisable( GL_BLEND );
 	}
 	else
 	{
@@ -576,6 +538,7 @@ void RendererVita::RenderUsingCurrentBlendMode(const float (&mat_project)[16], D
 			if( mBoundTexture[ texture_idx ] )
 			{
 				mBoundTexture[ texture_idx ]->InstallTexture();
+				if (is_3d && gUseMipmaps) mBoundTexture[ texture_idx ]->GenerateMipmaps();
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, mTexWrap[texture_idx].u);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, mTexWrap[texture_idx].v);
 				installed_texture = true;
@@ -588,18 +551,14 @@ void RendererVita::RenderUsingCurrentBlendMode(const float (&mat_project)[16], D
 			glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 		}
 		
-		/*if ( mTnL.Flags.Fog )
-		{
-		}
-		else*/
-		{
-			details.ColourAdjuster.Process(p_vertices, num_vertices);
-			DrawPrimitives(p_vertices, num_vertices, triangle_mode);
-		}
+		details.ColourAdjuster.Process(p_vertices, num_vertices);
+		glEnableClientState(GL_COLOR_ARRAY);
+		vglColorPointerMapped(GL_UNSIGNED_BYTE, p_vertices);
+		vglDrawObjects(triangle_mode, num_vertices, GL_TRUE);
 	}
 	else if( blend_entry.States != nullptr )
 	{
-		RenderUsingRenderSettings( blend_entry.States, p_vertices, num_vertices, triangle_mode );
+		RenderUsingRenderSettings( blend_entry.States, p_vertices, num_vertices, triangle_mode, is_3d );
 	}
 	else
 	{
@@ -608,139 +567,118 @@ void RendererVita::RenderUsingCurrentBlendMode(const float (&mat_project)[16], D
 		DAEDALUS_ERROR( "Unhandled blend mode" );
 		#endif
 		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-		DrawPrimitives(p_vertices, num_vertices, triangle_mode);
+		glEnableClientState(GL_COLOR_ARRAY);
+		vglColorPointerMapped(GL_UNSIGNED_BYTE, p_vertices);
+		vglDrawObjects(triangle_mode, num_vertices, GL_TRUE);
 	}
 
 }
 
-void RendererVita::RenderTriangles(DaedalusVtx *p_vertices, u32 num_vertices, bool disable_zbuffer)
-{
-	if (mTnL.Flags.Texture)
-	{
-		UpdateTileSnapshots( mTextureTile );
-		
-		CNativeTexture *texture = mBoundTexture[0];
-		
-		float *vtx_tex = gTexCoordBuffer;
-		
-		if( texture && (mTnL.Flags._u32 & (TNL_LIGHT|TNL_TEXGEN)) != (TNL_LIGHT|TNL_TEXGEN) )
-		{
-			glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-			float scale_x = texture->GetScaleX();
-			float scale_y = texture->GetScaleY();
-				
-			// Hack to fix the sun in Zelda OOT/MM
-			if( g_ROM.ZELDA_HACK && (gRDPOtherMode.L == 0x0c184241) )
-			{
-				scale_x *= 0.5f;
-				scale_y *= 0.5f;
-			}
-				
-			for (u32 i = 0; i < num_vertices; ++i)
-			{
-				gTexCoordBuffer[0] = (p_vertices[i].Texture.x * scale_x - (mTileTopLeft[ 0 ].s  / 4.f * scale_x));
-				gTexCoordBuffer[1] = (p_vertices[i].Texture.y * scale_y - (mTileTopLeft[ 0 ].t  / 4.f * scale_y));
-				gTexCoordBuffer += 2;
-			}	
-		} else {
-			for (u32 i = 0; i < num_vertices; ++i)
-			{
-				gTexCoordBuffer[0] = p_vertices[i].Texture.x;
-				gTexCoordBuffer[1] = p_vertices[i].Texture.y;
-				gTexCoordBuffer += 2;
-			}
-		}
-			
-		vglTexCoordPointerMapped(vtx_tex);
-	}
-	
-	RenderUsingCurrentBlendMode(gProjection.m, p_vertices, num_vertices, GL_TRIANGLES, disable_zbuffer);
+void RendererVita::RenderTriangles(uint32_t *colors, u32 num_vertices, bool disable_zbuffer)
+{	
+	SetPositiveViewport();
+	RenderUsingCurrentBlendMode(gProjection.m, colors, num_vertices, GL_TRIANGLES, disable_zbuffer, true);
 }
 
 void RendererVita::TexRect(u32 tile_idx, const v2 & xy0, const v2 & xy1, TexCoord st0, TexCoord st1)
 {
-	// FIXME(strmnnrmn): in copy mode, depth buffer is always disabled. Might not need to check this explicitly.
 	UpdateTileSnapshots( tile_idx );
-
-	// NB: we have to do this after UpdateTileSnapshot, as it set up mTileTopLeft etc.
-	// We have to do it before PrepareRenderState, because those values are applied to the graphics state.
 	PrepareTexRectUVs(&st0, &st1);
 	
 	v2 uv0( (float)st0.s / 32.f, (float)st0.t / 32.f );
 	v2 uv1( (float)st1.s / 32.f, (float)st1.t / 32.f );
 
+	//if ((gRDPOtherMode.L & 0xFFFFFF00) == 0x0C184200) CDebugConsole::Get()->Msg(1, "TexRect: L: 0x%08X, U: %f, V: %f, U2: %f, V2: %f", gRDPOtherMode.L, uv0.x, uv0.y, uv1.x, uv1.y);
+
 	v2 screen0;
 	v2 screen1;
-	ScaleN64ToScreen( xy0, screen0 );
-	ScaleN64ToScreen( xy1, screen1 );
-
+	if (gAspectRatio == RATIO_16_9_HACK) {
+		screen0.x = roundf( roundf( HD_SCALE * xy0.x ) * mN64ToScreenScale.x + 118 );
+		screen0.y = roundf( roundf( xy0.y )            * mN64ToScreenScale.y + mN64ToScreenTranslate.y );
+		screen1.x = roundf( roundf( HD_SCALE * xy1.x ) * mN64ToScreenScale.x + 118 );
+		screen1.y = roundf( roundf( xy1.y )            * mN64ToScreenScale.y + mN64ToScreenTranslate.y );
+	} else {
+		ScaleN64ToScreen( xy0, screen0 );
+		ScaleN64ToScreen( xy1, screen1 );
+	}
+	
 	const f32 depth = gRDPOtherMode.depth_source ? mPrimDepth : 0.0f;
 
 	CNativeTexture *texture = mBoundTexture[0];
-	float scale_x {texture->GetScaleX()};
-	float scale_y {texture->GetScaleY()};
-
+	float scale_x = texture->GetScaleX();
+	float scale_y = texture->GetScaleY();
+	
+	if (g_ROM.T0_SKIP_HACK && (gRDPOtherMode.L == 0x0C184244)) {
+		scale_x *= 0.125f;
+		scale_y *= 0.125f;
+	}
+	
 	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-	gTexCoordBuffer[0] = uv0.x * scale_x;
-	gTexCoordBuffer[1] = uv0.y * scale_y;
-	gTexCoordBuffer[2] = uv1.x * scale_x;
-	gTexCoordBuffer[3] = uv0.y * scale_y;
-	gTexCoordBuffer[4] = uv0.x * scale_x;
-	gTexCoordBuffer[5] = uv1.y * scale_y;
-	gTexCoordBuffer[6] = uv1.x * scale_x;
-	gTexCoordBuffer[7] = uv1.y * scale_y;
+	if (g_ROM.T0_SKIP_HACK && (gRDPOtherMode.L == 0x0C184244)) {
+		gTexCoordBuffer[0] = NORMALIZE_C1842XX(uv0.x) * scale_x;
+		gTexCoordBuffer[1] = NORMALIZE_C1842XX(uv0.y) * scale_y;
+		gTexCoordBuffer[2] = NORMALIZE_C1842XX(uv1.x) * scale_x;
+		gTexCoordBuffer[3] = NORMALIZE_C1842XX(uv0.y) * scale_y;
+		gTexCoordBuffer[4] = NORMALIZE_C1842XX(uv0.x) * scale_x;
+		gTexCoordBuffer[5] = NORMALIZE_C1842XX(uv1.y) * scale_y;
+		gTexCoordBuffer[6] = NORMALIZE_C1842XX(uv1.x) * scale_x;
+		gTexCoordBuffer[7] = NORMALIZE_C1842XX(uv1.y) * scale_y;	
+	} else {
+		gTexCoordBuffer[0] = uv0.x * scale_x;
+		gTexCoordBuffer[1] = uv0.y * scale_y;
+		gTexCoordBuffer[2] = uv1.x * scale_x;
+		gTexCoordBuffer[3] = uv0.y * scale_y;
+		gTexCoordBuffer[4] = uv0.x * scale_x;
+		gTexCoordBuffer[5] = uv1.y * scale_y;
+		gTexCoordBuffer[6] = uv1.x * scale_x;
+		gTexCoordBuffer[7] = uv1.y * scale_y;
+	}
 	vglTexCoordPointerMapped(gTexCoordBuffer);
 	gTexCoordBuffer += 8;
 	
-	DaedalusVtx * p_vertices = static_cast<DaedalusVtx *>(malloc(4 * sizeof(DaedalusVtx)));
+	gVertexBuffer[0] = screen0.x;
+	gVertexBuffer[1] = screen0.y;
+	gVertexBuffer[2] = depth;
+	gVertexBuffer[3] = screen1.x;
+	gVertexBuffer[4] = screen0.y;
+	gVertexBuffer[5] = depth;
+	gVertexBuffer[6] = screen0.x;
+	gVertexBuffer[7] = screen1.y;
+	gVertexBuffer[8] = depth;
+	gVertexBuffer[9] = screen1.x;
+	gVertexBuffer[10] = screen1.y;
+	gVertexBuffer[11] = depth;
+	vglVertexPointerMapped(gVertexBuffer);
+	gVertexBuffer += 12;
+
+	uint32_t *p_vertices = gColorBuffer;
+	gColorBuffer[0] = gColorBuffer[1] = gColorBuffer[2] = gColorBuffer[3] = 0xFFFFFFFF;
+	gColorBuffer += 4;
 	
-	p_vertices[0].Position.x = screen0.x;
-	p_vertices[0].Position.y = screen0.y;
-	p_vertices[0].Position.z = depth;
-	p_vertices[0].Colour = c32(0xffffffff);
-
-	p_vertices[1].Position.x = screen1.x;
-	p_vertices[1].Position.y = screen0.y;
-	p_vertices[1].Position.z = depth;
-	p_vertices[1].Colour = c32(0xffffffff);
-
-	p_vertices[2].Position.x = screen0.x;
-	p_vertices[2].Position.y = screen1.y;
-	p_vertices[2].Position.z = depth;
-	p_vertices[2].Colour = c32(0xffffffff);
-
-	p_vertices[3].Position.x = screen1.x;
-	p_vertices[3].Position.y = screen1.y;
-	p_vertices[3].Position.z = depth;
-	p_vertices[3].Colour = c32(0xffffffff);
-
-	RenderUsingCurrentBlendMode(mScreenToDevice.mRaw, p_vertices, 4, GL_TRIANGLE_STRIP, gRDPOtherMode.depth_source ? false : true);
-	free(p_vertices);
+	SetNegativeViewport();
+	
+	RenderUsingCurrentBlendMode(mScreenToDevice.mRaw, p_vertices, 4, GL_TRIANGLE_STRIP, gRDPOtherMode.depth_source ? false : true, false);
 	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 }
 
 void RendererVita::TexRectFlip(u32 tile_idx, const v2 & xy0, const v2 & xy1, TexCoord st0, TexCoord st1)
 {
-	// FIXME(strmnnrmn): in copy mode, depth buffer is always disabled. Might not need to check this explicitly.
 	UpdateTileSnapshots( tile_idx );
-
-	// NB: we have to do this after UpdateTileSnapshot, as it set up mTileTopLeft etc.
-	// We have to do it before PrepareRenderState, because those values are applied to the graphics state.
 	PrepareTexRectUVs(&st0, &st1);
 
 	v2 uv0( (float)st0.s / 32.f, (float)st0.t / 32.f );
 	v2 uv1( (float)st1.s / 32.f, (float)st1.t / 32.f );
+
+	//if ((gRDPOtherMode.L & 0xFFFFFF00) == 0x0C184200) CDebugConsole::Get()->Msg(1, "TexRectFlip: L: 0x%08X, U: %f, V: %f, U2: %f, V2: %f", gRDPOtherMode.L, uv0.x, uv0.y, uv1.x, uv1.y);
 
 	v2 screen0;
 	v2 screen1;
 	ScaleN64ToScreen( xy0, screen0 );
 	ScaleN64ToScreen( xy1, screen1 );
 
-	const f32 depth = gRDPOtherMode.depth_source ? mPrimDepth : 0.0f;
-
 	CNativeTexture *texture = mBoundTexture[0];
-	float scale_x {texture->GetScaleX()};
-	float scale_y {texture->GetScaleY()};
+	float scale_x = texture->GetScaleX();
+	float scale_y = texture->GetScaleY();
 	
 	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 	gTexCoordBuffer[0] = uv0.x * scale_x;
@@ -754,90 +692,141 @@ void RendererVita::TexRectFlip(u32 tile_idx, const v2 & xy0, const v2 & xy1, Tex
 	vglTexCoordPointerMapped(gTexCoordBuffer);
 	gTexCoordBuffer += 8;
 	
-	DaedalusVtx * p_vertices = static_cast<DaedalusVtx *>(malloc(4 * sizeof(DaedalusVtx)));
+	gVertexBuffer[0] = screen0.x;
+	gVertexBuffer[1] = screen0.y;
+	gVertexBuffer[2] = 0.0f;
+	gVertexBuffer[3] = screen1.x;
+	gVertexBuffer[4] = screen0.y;
+	gVertexBuffer[5] = 0.0f;
+	gVertexBuffer[6] = screen0.x;
+	gVertexBuffer[7] = screen1.y;
+	gVertexBuffer[8] = 0.0f;
+	gVertexBuffer[9] = screen1.x;
+	gVertexBuffer[10] = screen1.y;
+	gVertexBuffer[11] = 0.0f;
+	vglVertexPointerMapped(gVertexBuffer);
+	gVertexBuffer += 12;
+	
+	uint32_t *p_vertices = gColorBuffer;
+	gColorBuffer[0] = gColorBuffer[1] = gColorBuffer[2] = gColorBuffer[3] = 0xFFFFFFFF;
+	gColorBuffer += 4;
 
-	p_vertices[0].Position.x = screen0.x;
-	p_vertices[0].Position.y = screen0.y;
-	p_vertices[0].Position.z = 0.0f;
-	p_vertices[0].Colour = c32(0xffffffff);
+	SetNegativeViewport();
 
-	p_vertices[1].Position.x = screen1.x;
-	p_vertices[1].Position.y = screen0.y;
-	p_vertices[1].Position.z = 0.0f;
-	p_vertices[1].Colour = c32(0xffffffff);;
-
-	p_vertices[2].Position.x = screen0.x;
-	p_vertices[2].Position.y = screen1.y;
-	p_vertices[2].Position.z = 0.0f;
-	p_vertices[2].Colour = c32(0xffffffff);
-
-	p_vertices[3].Position.x = screen1.x;
-	p_vertices[3].Position.y = screen1.y;
-	p_vertices[3].Position.z = 0.0f;
-	p_vertices[3].Colour = c32(0xffffffff);
-
-	RenderUsingCurrentBlendMode(mScreenToDevice.mRaw, p_vertices, 4, GL_TRIANGLE_STRIP, gRDPOtherMode.depth_source ? false : true);
-	free(p_vertices);
+	RenderUsingCurrentBlendMode(mScreenToDevice.mRaw, p_vertices, 4, GL_TRIANGLE_STRIP, gRDPOtherMode.depth_source ? false : true, false);
 	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 }
 
 void RendererVita::FillRect(const v2 & xy0, const v2 & xy1, u32 color)
 {
+	//if ((gRDPOtherMode.L & 0xFFFFFF00) == 0x0C184200) CDebugConsole::Get()->Msg(1, "FillRect: L: 0x%08X", gRDPOtherMode.L);
 	v2 screen0;
 	v2 screen1;
 	ScaleN64ToScreen( xy0, screen0 );
 	ScaleN64ToScreen( xy1, screen1 );
 	
-	const f32 depth = gRDPOtherMode.depth_source ? mPrimDepth : 0.0f;
+	gVertexBuffer[0] = screen0.x;
+	gVertexBuffer[1] = screen0.y;
+	gVertexBuffer[2] = 0.0f;
+	gVertexBuffer[3] = screen1.x;
+	gVertexBuffer[4] = screen0.y;
+	gVertexBuffer[5] = 0.0f;
+	gVertexBuffer[6] = screen0.x;
+	gVertexBuffer[7] = screen1.y;
+	gVertexBuffer[8] = 0.0f;
+	gVertexBuffer[9] = screen1.x;
+	gVertexBuffer[10] = screen1.y;
+	gVertexBuffer[11] = 0.0f;
+	vglVertexPointerMapped(gVertexBuffer);
+	gVertexBuffer += 12;
 	
-	DaedalusVtx * p_vertices = static_cast<DaedalusVtx *>(malloc(4 * sizeof(DaedalusVtx)));
-	
-	p_vertices[0].Position.x = screen0.x;
-	p_vertices[0].Position.y = screen0.y;
-	p_vertices[0].Position.z = 0.0f;
-	p_vertices[0].Colour = c32(color);
-
-	p_vertices[1].Position.x = screen1.x;
-	p_vertices[1].Position.y = screen0.y;
-	p_vertices[1].Position.z = 0.0f;
-	p_vertices[1].Colour = c32(color);
-
-	p_vertices[2].Position.x = screen0.x;
-	p_vertices[2].Position.y = screen1.y;
-	p_vertices[2].Position.z = 0.0f;
-	p_vertices[2].Colour = c32(color);
-
-	p_vertices[3].Position.x = screen1.x;
-	p_vertices[3].Position.y = screen1.y;
-	p_vertices[3].Position.z = 0.0f;
-	p_vertices[3].Colour = c32(color);
+	uint32_t *p_vertices = gColorBuffer;
+	gColorBuffer[0] = gColorBuffer[1] = gColorBuffer[2] = gColorBuffer[3] = color;
+	gColorBuffer += 4;
 	
 	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-	RenderUsingCurrentBlendMode(mScreenToDevice.mRaw, p_vertices, 4, GL_TRIANGLE_STRIP, true);
-	free(p_vertices);
+	RenderUsingCurrentBlendMode(mScreenToDevice.mRaw, p_vertices, 4, GL_TRIANGLE_STRIP, true, false);
+}
+
+void RendererVita::DoGamma(float gamma)
+{
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+	glEnable(GL_BLEND);
+	glDisable(GL_ALPHA_TEST);
+	glBlendFunc(GL_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA);
+	
+	gVertexBuffer[0] = 0.0f;
+	gVertexBuffer[1] = 0.0f;
+	gVertexBuffer[2] = 0.0f;
+	gVertexBuffer[3] = SCR_WIDTH;
+	gVertexBuffer[4] = 0.0f;
+	gVertexBuffer[5] = 0.0f;
+	gVertexBuffer[6] = 0.0f;
+	gVertexBuffer[7] = SCR_HEIGHT;
+	gVertexBuffer[8] = 0.0f;
+	gVertexBuffer[9] = SCR_WIDTH;
+	gVertexBuffer[10] = SCR_HEIGHT;
+	gVertexBuffer[11] = 0.0f;
+	vglVertexPointerMapped(gVertexBuffer);
+	gVertexBuffer += 12;
+	
+	// Hack to use float colors without having to use a temporary buffer
+	gVertexBuffer[0] = gVertexBuffer[1] = gVertexBuffer[2] = 1.0f;
+	gVertexBuffer[3] = gamma;
+	gVertexBuffer[4] = gVertexBuffer[5] = gVertexBuffer[6] = 1.0f;
+	gVertexBuffer[7] = gamma;
+	gVertexBuffer[8] = gVertexBuffer[9] = gVertexBuffer[10] = 1.0f;
+	gVertexBuffer[11] = gamma;
+	gVertexBuffer[12] = gVertexBuffer[13] = gVertexBuffer[14] = 1.0f;
+	gVertexBuffer[15] = gamma;
+	
+	vglColorPointerMapped(GL_FLOAT, gVertexBuffer);
+	gVertexBuffer += 16;
+	
+	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+	glEnableClientState(GL_COLOR_ARRAY);
+	glMatrixMode(GL_PROJECTION);
+	glLoadMatrixf((float*)mScreenToDevice.mRaw);
+	vglDrawObjects(GL_TRIANGLE_STRIP, 4, GL_TRUE);
 }
 
 void RendererVita::Draw2DTexture(f32 x0, f32 y0, f32 x1, f32 y1,
 								f32 u0, f32 v0, f32 u1, f32 v1,
 								const CNativeTexture * texture)
 {
+	//if ((gRDPOtherMode.L & 0xFFFFFF00) == 0x0C184200) CDebugConsole::Get()->Msg(1, "Draw2DTexture: L: 0x%08X", gRDPOtherMode.L);
 	glMatrixMode(GL_PROJECTION);
 	glLoadMatrixf((float*)mScreenToDevice.mRaw);
 	
 	texture->InstallTexture();
 	
+	// Enable or Disable ZBuffer test
+	if ((mTnL.Flags.Zbuffer && gRDPOtherMode.z_cmp) || gRDPOtherMode.z_upd)
+		glEnable(GL_DEPTH_TEST);
+	else
+		glDisable(GL_DEPTH_TEST);
+	
+	glDepthMask(gRDPOtherMode.z_upd ? GL_TRUE : GL_FALSE);
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glEnable(GL_BLEND);
+	glDisable(GL_ALPHA_TEST);
+	
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	
-	float sx0 = N64ToScreenX(x0);
-	float sy0 = N64ToScreenY(y0);
+	float scale_x = texture->GetScaleX();
+	float scale_y = texture->GetScaleY();
+	
+	float sx0 = LightN64ToScreenX(x0);
+	float sy0 = LightN64ToScreenY(y0);
 
-	float sx1 = N64ToScreenX(x1);
-	float sy1 = N64ToScreenY(y1);
-
+	float sx1 = LightN64ToScreenX(x1);
+	float sy1 = LightN64ToScreenY(y1);
+	
 	glDisableClientState(GL_COLOR_ARRAY);
 	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 	gVertexBuffer[0] = sx0;
@@ -852,14 +841,14 @@ void RendererVita::Draw2DTexture(f32 x0, f32 y0, f32 x1, f32 y1,
 	gVertexBuffer[9] = sx1;
 	gVertexBuffer[10] = sy1;
 	gVertexBuffer[11] = 0.0f;
-	gTexCoordBuffer[0] = u0;
-	gTexCoordBuffer[1] = v0;
-	gTexCoordBuffer[2] = u1;
-	gTexCoordBuffer[3] = v0;
-	gTexCoordBuffer[4] = u0;
-	gTexCoordBuffer[5] = v1;
-	gTexCoordBuffer[6] = u1;
-	gTexCoordBuffer[7] = v1;
+	gTexCoordBuffer[0] = u0 * scale_x;
+	gTexCoordBuffer[1] = v0 * scale_y;
+	gTexCoordBuffer[2] = u1 * scale_x;
+	gTexCoordBuffer[3] = v0 * scale_y;
+	gTexCoordBuffer[4] = u0 * scale_x;
+	gTexCoordBuffer[5] = v1 * scale_y;
+	gTexCoordBuffer[6] = u1 * scale_x;
+	gTexCoordBuffer[7] = v1 * scale_y;
 	vglVertexPointerMapped(gVertexBuffer);
 	vglTexCoordPointerMapped(gTexCoordBuffer);
 	gVertexBuffer += 12;
@@ -868,41 +857,57 @@ void RendererVita::Draw2DTexture(f32 x0, f32 y0, f32 x1, f32 y1,
 	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 }
 
-void RendererVita::Draw2DTextureR(f32 x0, f32 y0, f32 x1, f32 y1,
-								 f32 x2, f32 y2, f32 x3, f32 y3,
-								 f32 s, f32 t)
+void RendererVita::Draw2DTextureR(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2,
+								 f32 y2, f32 x3, f32 y3, f32 s, f32 t,
+								 const CNativeTexture * texture)
 {
+	//if ((gRDPOtherMode.L & 0xFFFFFF00) == 0x0C184200) CDebugConsole::Get()->Msg(1, "Draw2DTextureR: L: 0x%08X", gRDPOtherMode.L);
 	glMatrixMode(GL_PROJECTION);
 	glLoadMatrixf((float*)mScreenToDevice.mRaw);
 	
+	texture->InstallTexture();
+	
+	// Enable or Disable ZBuffer test
+	if ((mTnL.Flags.Zbuffer && gRDPOtherMode.z_cmp) || gRDPOtherMode.z_upd)
+		glEnable(GL_DEPTH_TEST);
+	else
+		glDisable(GL_DEPTH_TEST);
+	
+	glDepthMask(gRDPOtherMode.z_upd ? GL_TRUE : GL_FALSE);
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glEnable(GL_BLEND);
+	glDisable(GL_ALPHA_TEST);
+	
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	
+	float scale_x = texture->GetScaleX();
+	float scale_y = texture->GetScaleY();
 
 	glDisableClientState(GL_COLOR_ARRAY);
 	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-	gVertexBuffer[0] = N64ToScreenX(x0);
-	gVertexBuffer[1] = N64ToScreenY(y0);
+	gVertexBuffer[0] = LightN64ToScreenX(x0);
+	gVertexBuffer[1] = LightN64ToScreenY(y0);
 	gVertexBuffer[2] = 0.0f;
-	gVertexBuffer[3] = N64ToScreenX(x1);
-	gVertexBuffer[4] = N64ToScreenY(y1);
+	gVertexBuffer[3] = LightN64ToScreenX(x1);
+	gVertexBuffer[4] = LightN64ToScreenY(y1);
 	gVertexBuffer[5] = 0.0f;
-	gVertexBuffer[6] = N64ToScreenX(x2);
-	gVertexBuffer[7] = N64ToScreenY(y2);
+	gVertexBuffer[6] = LightN64ToScreenX(x2);
+	gVertexBuffer[7] = LightN64ToScreenY(y2);
 	gVertexBuffer[8] = 0.0f;
-	gVertexBuffer[9] = N64ToScreenX(x3);
-	gVertexBuffer[10] = N64ToScreenY(y3);
+	gVertexBuffer[9] = LightN64ToScreenX(x3);
+	gVertexBuffer[10] = LightN64ToScreenY(y3);
 	gVertexBuffer[11] = 0.0f;
 	gTexCoordBuffer[0] = 0.0f;
 	gTexCoordBuffer[1] = 0.0f;
-	gTexCoordBuffer[2] = s;
+	gTexCoordBuffer[2] = s * scale_x;
 	gTexCoordBuffer[3] = 0.0f;
-	gTexCoordBuffer[4] = s;
-	gTexCoordBuffer[5] = t;
+	gTexCoordBuffer[4] = s * scale_x;
+	gTexCoordBuffer[5] = t * scale_y;
 	gTexCoordBuffer[6] = 0.0f;
-	gTexCoordBuffer[7] = t;
+	gTexCoordBuffer[7] = t * scale_y;
 	vglVertexPointerMapped(gVertexBuffer);
 	vglTexCoordPointerMapped(gTexCoordBuffer);
 	gVertexBuffer += 12;

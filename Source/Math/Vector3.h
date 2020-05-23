@@ -1,14 +1,24 @@
 #ifndef MATH_VECTOR3_H_
 #define MATH_VECTOR3_H_
 
+// Note: For Vita build we make this to be a Vector4 in order to take advantage of NEON
+#ifdef DAEDALUS_VITA
+extern "C" {
+#include <math_neon.h>
+};
+#endif
+
 #include "Math/Math.h"	// VFPU Math
 
 class v3
 {
 public:
 	v3() {}
+#ifdef DAEDALUS_VITA
+	v3( float _x, float _y, float _z ) : x( _x ), y( _y ), z( _z ), w( 0.0f ) {}
+#else
 	v3( float _x, float _y, float _z ) : x( _x ), y( _y ), z( _z ) {}
-
+#endif
 
 	v3 operator+( const v3 & v ) const
 	{
@@ -67,6 +77,11 @@ public:
 	{
 		vfpu_norm_3Dvec(&x, &y, &z);
 	}
+#elif defined(DAEDALUS_VITA)
+	void Normalise()
+	{
+		normalize4_neon(f, f);
+	}
 #else
 	void Normalise()
 	{
@@ -109,10 +124,24 @@ public:
 
 	float Dot( const v3 & rhs ) const
 	{
+#ifdef DAEDALUS_VITA
+		return dot4_neon((float*)f, (float*)rhs.f);
+#else
 		return (x*rhs.x) + (y*rhs.y) + (z*rhs.z);
+#endif
 	}
 
-	float x, y, z;
+#ifdef DAEDALUS_VITA
+	union {
+		struct { float x, y, z, w; };
+		float f[4];
+	};
+#else
+	union {
+		struct { float x, y, z; };
+		float f[3];
+	};
+#endif
 };
 
 #endif // MATH_VECTOR3_H_

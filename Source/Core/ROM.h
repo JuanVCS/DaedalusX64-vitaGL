@@ -103,9 +103,7 @@ enum EGameHacks
 	PMARIO,
 	GEX_GECKO,
 	WONDER_PROJECTJ2,
-	ANIMAL_CROSSING,
 	CHAMELEON_TWIST_2,
-	CLAY_FIGHTER_63,
 	BODY_HARVEST,
 	AIDYN_CRONICLES,
 	ISS64,
@@ -117,6 +115,8 @@ enum EGameHacks
 	SIN_PUNISHMENT,
 	DK64,
 	BANJO_TOOIE,
+	POKEMON_STADIUM,
+	QUAKE,
 	MAX_HACK_NAMES	//DONT CHANGE THIS! AND SHOULD BE LAST ENTRY
 };
 
@@ -146,11 +146,11 @@ struct RomInfo
 			u32			DISABLE_LBU_OPT:1;		//Disable memory optimation for
 			u32			DISABLE_SIM_CVT_D_S:1;	//Hack to disable sim-CVT_D_S
 			u32			SET_ROUND_MODE:1;		//Hack to set rounding mode for the PSP
-			u32			PROJ_HACK:1;	        //Hack to vertical flip orjection matrix
-			u32			Pad9:1;	//free
-			u32			PadA:1;	//free
-			u32			PadB:1;	//free
-			u32			PadC:1;	//free
+			u32			T0_SKIP_HACK:1;			//Hack for Rayman 2 texts
+			u32			SCISSOR_HACK:1;			//Hack to unbind viewport and scissor test region
+			u32			SKIP_CPU_REND_HACK:1;	//Hack to disable CPU rendering at boot
+			u32			SKIP_MSG_SEND_HACK:1;	//Dummies osSendMesg
+			u32			KEEP_MODE_H_HACK:1;		//Hack to prevent RDP OtherMode H reset
 			u32			PadD:1;	//free
 			u32			PadE:1;	//free
 			u32			PadF:1;	//free

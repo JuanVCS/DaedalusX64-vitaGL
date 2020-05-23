@@ -19,4 +19,5 @@ Invite link: https://discord.gg/PyCaBx9
 - m4xw for the help sanitizing PIF code
 - MasterFeizz for the ARM DynaRec
 - frangarcj for several improvements and bugfixes
-- That One Seong for the Livearea assets
+- That One Seong & TheIronUniverse for the LiveArea assets
+- withLogic for the high-res preview assets

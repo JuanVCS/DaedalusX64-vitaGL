@@ -33,7 +33,7 @@
 
 static uint64_t tmr1;
 static uint32_t oldpad;
-static bool pause_emu = false;
+bool pause_emu = false;
 
 void DrawInGameMenu() {
 	DrawInGameMenuBar();
@@ -51,7 +51,7 @@ void DrawInGameMenu() {
 		tmr1 = sceKernelGetProcessTimeWide();
 	}else if (delta_touch > 3000000){
 		ImGui::GetIO().MouseDrawCursor = false;
-		show_menubar = !hide_menubar;
+		show_menubar = !gHideMenubar;
 	}
 	
 	// Handling emulation pause
@@ -59,9 +59,5 @@ void DrawInGameMenu() {
 	sceCtrlPeekBufferPositive(0, &pad, 1);
 	if ((pad.buttons & SCE_CTRL_SELECT) && (!(oldpad & SCE_CTRL_SELECT))) pause_emu = !pause_emu;
 	oldpad = pad.buttons;
-	vglStopRendering();
-	if (pause_emu) {
-		CGraphicsContext::Get()->BeginFrame();
-		CGraphicsContext::Get()->EndFrame();
-	}
+	if (!pause_emu) vglStopRenderingInit();
 }

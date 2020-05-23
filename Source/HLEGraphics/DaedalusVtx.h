@@ -34,13 +34,12 @@ ALIGNED_TYPE(struct, DaedalusVtx4, 16)
     v2	Texture {};
 
 	u32	ClipFlags {};
-	u32 Pad {};
 
 	void Interpolate( const DaedalusVtx4 & lhs, const DaedalusVtx4 & rhs, float factor );
 };
-
+#ifdef DAEDALUS_PSP
 DAEDALUS_STATIC_ASSERT( sizeof(DaedalusVtx4) == 64 );
-
+#endif
 struct TexCoord
 {
 	s16		s;
@@ -75,7 +74,7 @@ struct DaedalusVtx
 	c32		Colour {};
     v3		Position {};
 };
-
+#ifdef DAEDALUS_PSP
 DAEDALUS_STATIC_ASSERT( sizeof(DaedalusVtx) == 24 );
-
+#endif
 #endif // HLEGRAPHICS_DAEDALUSVTX_H_
