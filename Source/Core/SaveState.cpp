@@ -198,7 +198,7 @@ bool SaveState_SaveToFile( const char * filename )
 	stream << SAVESTATE_PROJECT64_MAGIC_NUMBER;
 	stream << gRamSize;
 	ROMHeader rom_header;
-	memcpy(&rom_header, &g_ROM.rh, 64);
+	memcpy_neon(&rom_header, &g_ROM.rh, 64);
 	ROMFile::ByteSwap_3210(&rom_header, 64);
 	stream << rom_header;
 	stream << Max< u32 >(CPU_GetVideoInterruptEventCount(), 1);
@@ -251,27 +251,6 @@ bool SaveState_SaveToFile( const char * filename )
 	return true;
 }
 
-// In revision >=715 we were byte swapping PIF RAM in a temp buffer, this broke compatibility with PJ64 saves
-// Now that is fixed this been added for compatibility reasons for any ss created within those revs..
-static void Swap_PIF()
-{
-	u8 * pPIFRam = (u8 *)g_pMemoryBuffers[MEM_PIF_RAM];
-
-	if(pPIFRam[0] & 0xC0)
-	{
-		printf("No need to swap\n");
-		return;
-	}
-
-	u8 temp[64];
-	memcpy( temp, pPIFRam, 64 );
-
-	for (u32 i = 0; i < 64; i++)
-	{
-		pPIFRam[i] = temp[ i ^ U8_TWIDDLE ];
-	}
-}
-
 bool SaveState_LoadFromFile( const char * filename )
 {
 	SaveState_istream_gzip stream( filename );
@@ -283,9 +262,7 @@ bool SaveState_LoadFromFile( const char * filename )
 	stream >> value;
 	if(value != SAVESTATE_PROJECT64_MAGIC_NUMBER)
 	{
-		#ifdef DAEDALUS_DEBUG_CONSOLE
 		DBGConsole_Msg(0, "Wrong magic number - savestate could be damaged or not in Daedalus/Project64 format" );
-		#endif
 		return false;
 	}
 	stream >> gRamSize;
@@ -298,12 +275,8 @@ bool SaveState_LoadFromFile( const char * filename )
 	if(g_ROM.mRomID != new_rom_id)
 	{
 		//ToDo: Give Option to switch Roms to one listed in SaveState if available.
-		#ifdef DAEDALUS_DEBUG_CONSOLE
 		DBGConsole_Msg(0, "ROM name in savestate is different from the name of the currently loaded ROM: %x-%x-%02x, %x-%x-%02x\n",
-
-			g_ROM.mRomID.CRC[0], g_ROM.mRomID.CRC[1], g_ROM.mRomID.CountryID,
-			new_rom_id.CRC[0], new_rom_id.CRC[1], new_rom_id.CountryID);
-					#endif
+			g_ROM.mRomID.CRC[0], g_ROM.mRomID.CRC[1], g_ROM.mRomID.CountryID, new_rom_id.CRC[0], new_rom_id.CRC[1], new_rom_id.CountryID);
 		return false;
 	}
 
@@ -337,21 +310,21 @@ bool SaveState_LoadFromFile( const char * filename )
 
 	u8* dpcRegData = new u8[MemoryRegionSizes[MEM_DPC_REG]];
 	stream.read(dpcRegData, MemoryRegionSizes[MEM_DPC_REG]);
-	memcpy(g_pMemoryBuffers[MEM_DPC_REG], dpcRegData, MemoryRegionSizes[MEM_DPC_REG]);
+	memcpy_neon(g_pMemoryBuffers[MEM_DPC_REG], dpcRegData, MemoryRegionSizes[MEM_DPC_REG]);
 
 	stream.skip(8); // PJ64 stores 10 MEM_DP_COMMAND_REGs
 
 	u8* miRegData = new u8[MemoryRegionSizes[MEM_MI_REG]];
 	stream.read(miRegData, MemoryRegionSizes[MEM_MI_REG]);
-	memcpy(g_pMemoryBuffers[MEM_MI_REG], miRegData, MemoryRegionSizes[MEM_MI_REG]);
+	memcpy_neon(g_pMemoryBuffers[MEM_MI_REG], miRegData, MemoryRegionSizes[MEM_MI_REG]);
 
 	stream.read_memory_buffer_write_value(MEM_VI_REG, 0x84400000); // call WriteValue to update global and GFX plugin data
 	stream.read_memory_buffer_write_value(MEM_AI_REG, 0x84500000); // call WriteValue to update audio plugin data
 
 	// here to undo any modifications done by plugins
-	memcpy(g_pMemoryBuffers[MEM_DPC_REG], dpcRegData, MemoryRegionSizes[MEM_DPC_REG]);
+	memcpy_neon(g_pMemoryBuffers[MEM_DPC_REG], dpcRegData, MemoryRegionSizes[MEM_DPC_REG]);
 	delete [] dpcRegData;
-	memcpy(g_pMemoryBuffers[MEM_MI_REG], miRegData, MemoryRegionSizes[MEM_MI_REG]);
+	memcpy_neon(g_pMemoryBuffers[MEM_MI_REG], miRegData, MemoryRegionSizes[MEM_MI_REG]);
 	delete [] miRegData;
 
 	stream.read_memory_buffer(MEM_PI_REG); //, 0x84600000);
@@ -389,7 +362,6 @@ bool SaveState_LoadFromFile( const char * filename )
 	//stream.skip(0x40);
 
 	stream.read(g_pMemoryBuffers[MEM_PIF_RAM], 0x40);
-	Swap_PIF();
 
 	stream.read(g_pMemoryBuffers[MEM_RD_RAM], gRamSize);
 	stream.read_memory_buffer(MEM_SP_MEM); //, 0x84000000);

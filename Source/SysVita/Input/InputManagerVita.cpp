@@ -24,11 +24,13 @@
 #define SCE_CTRL_RLEFT  SCE_CTRL_VOLDOWN
 #define SCE_CTRL_RRIGHT SCE_CTRL_POWER
 
+extern bool gUseRearpad;
+
 v2	ApplyDeadzone( const v2 & in, f32 min_deadzone, f32 max_deadzone );
 
 namespace
 {
-	static const f32					DEFAULT_MIN_DEADZONE = 0.28f;
+	static const f32					DEFAULT_MIN_DEADZONE = 0.25f;
 	static const f32					DEFAULT_MAX_DEADZONE = 1.f;
 
 	static const s32					N64_ANALOGUE_STICK_RANGE( 80 );
@@ -405,8 +407,22 @@ void IInputManager::GetState( OSContPad pPad[4] )
 
 	for (int i = 0; i < 4; i++) {	
 		SceCtrlData pad;
-		if (sceCtrlPeekBufferPositive(i ? (i+1) : 0, &pad, 1) < 0) continue; //Get VITA button inputs
+		if (sceCtrlPeekBufferPositiveExt2(i ? (i+1) : 0, &pad, 1) < 0) continue; //Get VITA button inputs
 
+		if (gUseRearpad) {
+			SceTouchData touch;
+			sceTouchPeek(SCE_TOUCH_PORT_BACK, &touch, 1);
+			for (uint32_t j = 0; j < touch.reportNum; j++) {
+				if (touch.report[j].x < 960) {
+					if (touch.report[j].y < 544) pad.buttons |= SCE_CTRL_L2;
+					else pad.buttons |= SCE_CTRL_L3;
+				} else {
+					if (touch.report[j].y < 544) pad.buttons |= SCE_CTRL_R2;
+					else pad.buttons |= SCE_CTRL_R3;
+				}
+			}
+		}
+		
 		//	'Normalise' from 0..255 -> -128..+127
 		//
 		s32 normalised_x( pad.lx - VITA_ANALOGUE_STICK_RANGE );
@@ -492,8 +508,8 @@ const SButtonNameMapping	gButtonNameMappings[] =
 	{ "VITA.Square",	SCE_CTRL_SQUARE },
 	{ "VITA.Triangle",	SCE_CTRL_TRIANGLE },
 	{ "VITA.Circle",	SCE_CTRL_CIRCLE },
-	{ "VITA.LTrigger",	SCE_CTRL_LTRIGGER },
-	{ "VITA.RTrigger",	SCE_CTRL_RTRIGGER },
+	{ "VITA.LTrigger",	SCE_CTRL_L1 },
+	{ "VITA.RTrigger",	SCE_CTRL_R1 },
 	{ "VITA.Up",		SCE_CTRL_UP },
 	{ "VITA.Down",		SCE_CTRL_DOWN },
 	{ "VITA.Left",		SCE_CTRL_LEFT },
@@ -502,7 +518,11 @@ const SButtonNameMapping	gButtonNameMappings[] =
 	{ "VITA.RUp",	    SCE_CTRL_RUP },
 	{ "VITA.RDown",	    SCE_CTRL_RDOWN },
 	{ "VITA.RLeft",	    SCE_CTRL_RLEFT },
-	{ "VITA.RRight",	SCE_CTRL_RRIGHT }
+	{ "VITA.RRight",	SCE_CTRL_RRIGHT },
+	{ "VITA.L2",		SCE_CTRL_L2 },
+	{ "VITA.R2",		SCE_CTRL_R2 },
+	{ "VITA.L3",		SCE_CTRL_L3 },
+	{ "VITA.R3",		SCE_CTRL_R3 }
 };
 
 u32 GetOperatorPrecedence( char op )

@@ -34,15 +34,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 extern u32 gSoundSync;
 
-static const u32	DESIRED_OUTPUT_FREQUENCY = 44100;
-
-//static const u32	ADAPTIVE_FREQUENCY_ADJUST = 2000;
-// Large BUFFER_SIZE creates huge delay on sound //Corn
-static const u32	BUFFER_SIZE  = 1024 * 2;
-
 static const u32	VITA_NUM_SAMPLES = 512;
+static const u32	BUFFER_SIZE  = VITA_NUM_SAMPLES * 4;
 
 volatile u32 sound_status;
+extern bool async_boot;
 
 static bool audio_open = false;
 
@@ -52,7 +48,7 @@ CAudioBuffer *mAudioBuffer;
 
 static int audioOutput(unsigned int args, void *argp)
 {
-	uint16_t *playbuf = (uint16_t*)malloc(BUFFER_SIZE);
+	Sample *playbuf = (Sample*)malloc(BUFFER_SIZE);
 	
 	// reserve audio channel
 	SceUID sound_channel = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, VITA_NUM_SAMPLES, DESIRED_OUTPUT_FREQUENCY, SCE_AUDIO_OUT_MODE_STEREO);
@@ -63,7 +59,7 @@ static int audioOutput(unsigned int args, void *argp)
 
 	while (sound_status != 0xDEADBEEF)
 	{
-		mAudioBuffer->Drain( reinterpret_cast< Sample * >( playbuf ), VITA_NUM_SAMPLES );
+		mAudioBuffer->Drain(playbuf, VITA_NUM_SAMPLES);
 		sceAudioOutOutput(sound_channel, playbuf);
 	}
 	free(playbuf);
@@ -91,6 +87,7 @@ static void AudioExit()
 	{
 		sound_status = 0xDEADBEEF;
 		sceKernelDelayThread(100*1000);
+		async_boot = false;
 	}
 
 	audio_open = false;
@@ -131,8 +128,9 @@ void AudioOutput::AddBuffer( u8 *start, u32 length )
 	u32 output_freq = DESIRED_OUTPUT_FREQUENCY;
 	if (gAudioRateMatch)
 	{
-		if (gSoundSync > 88200)	output_freq = 88200;	//limit upper rate
+		if (gSoundSync > DESIRED_OUTPUT_FREQUENCY * 2) output_freq = DESIRED_OUTPUT_FREQUENCY * 2;	//limit upper rate
 		else if (gSoundSync < DESIRED_OUTPUT_FREQUENCY)	output_freq = DESIRED_OUTPUT_FREQUENCY;	//limit lower rate
+		else output_freq = gSoundSync;
 	}
 
 

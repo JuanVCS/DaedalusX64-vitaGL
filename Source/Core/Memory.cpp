@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "CPU.h"
 #include "DMA.h"
+#include "Core/FlashMem.h"
 #include "Interrupt.h"
 #include "ROM.h"
 #include "ROMBuffer.h"
@@ -60,11 +61,6 @@ static void MemoryUpdatePI( u32 value );
 static void MemoryUpdatePIF();
 
 static void Memory_InitTables();
-
-// Flash RAM Support
-extern u32 FlashStatus[2];
-void Flash_DoCommand(u32);
-void Flash_Init();
 
 const u32 MemoryRegionSizes[NUM_MEM_BUFFERS] =
 {
@@ -134,6 +130,7 @@ bool Memory_Init()
 	}
 
 	uintptr_t base = reinterpret_cast<uintptr_t>(gMemBase);
+
 
 	g_pMemoryBuffers[ MEM_RD_RAM    ] = (u8*)VirtualAlloc( (void*)(base+0x00000000),	8*1024*1024,MEM_COMMIT, PAGE_READWRITE );
 	g_pMemoryBuffers[ MEM_SP_MEM    ] = (u8*)VirtualAlloc( (void*)(base+0x04000000),	0x2000,		MEM_COMMIT, PAGE_READWRITE );
@@ -635,58 +632,68 @@ void MemoryUpdateSPStatus( u32 flags )
 	if (flags & SP_CLR_SIG7)				DBGConsole_Msg( 0, "SP: Clearing Sig7" );
 	if (flags & SP_SET_SIG7)				DBGConsole_Msg( 0, "SP: Setting Sig7" );
 #endif
-
+	
+	bool start_rsp = false;
+	//bool stop_rsp = false;
+	
 	u32	clr_bits = 0, set_bits = 0;
 
-	if (flags & SP_CLR_HALT)
+	if (flags & SP_CLR_HALT) {
 		clr_bits |= SP_STATUS_HALT;
-	else if (flags & SP_SET_HALT)
+		start_rsp = true;
+	}
+	
+	if (flags & SP_SET_HALT) {
 		set_bits |= SP_STATUS_HALT;
+		//stop_rsp = true;
+	}
+	
+	if (flags & SP_CLR_BROKE)
+	{
+		clr_bits |= SP_STATUS_BROKE;
+		start_rsp = true;
+	}
+
+	if (flags & SP_CLR_INTR)
+	{
+		Memory_MI_ClrRegisterBits(MI_INTR_REG, MI_INTR_SP);
+		R4300_Interrupt_UpdateCause3();
+	}
 
 	if (flags & SP_SET_INTR)	// Shouldn't ever set this?
 	{
 		Memory_MI_SetRegisterBits(MI_INTR_REG, MI_INTR_SP);
 		R4300_Interrupt_UpdateCause3();
 	}
-	else if (flags & SP_CLR_INTR)
-	{
-		Memory_MI_ClrRegisterBits(MI_INTR_REG, MI_INTR_SP);
-		R4300_Interrupt_UpdateCause3();
-	}
 
-	clr_bits |= (flags & SP_CLR_BROKE) >> 1;
-	clr_bits |= (flags & SP_CLR_SSTEP);
-	clr_bits |= (flags & SP_CLR_INTR_BREAK) >> 1;
-	clr_bits |= (flags & SP_CLR_SIG0) >> 2;
-	clr_bits |= (flags & SP_CLR_SIG1) >> 3;
-	clr_bits |= (flags & SP_CLR_SIG2) >> 4;
-	clr_bits |= (flags & SP_CLR_SIG3) >> 5;
-	clr_bits |= (flags & SP_CLR_SIG4) >> 6;
-	clr_bits |= (flags & SP_CLR_SIG5) >> 7;
-	clr_bits |= (flags & SP_CLR_SIG6) >> 8;
-	clr_bits |= (flags & SP_CLR_SIG7) >> 9;
+	if (flags & SP_CLR_SSTEP)        clr_bits |= SP_STATUS_SSTEP;
+	if (flags & SP_SET_SSTEP)        set_bits |= SP_STATUS_SSTEP;
+	if (flags & SP_CLR_INTR_BREAK)   clr_bits |= SP_STATUS_INTR_BREAK;
+	if (flags & SP_SET_INTR_BREAK)   set_bits |= SP_STATUS_INTR_BREAK;
+	if (flags & SP_CLR_SIG0)         clr_bits |= SP_STATUS_SIG0;
+	if (flags & SP_SET_SIG0)         set_bits |= SP_STATUS_SIG0;
+	if (flags & SP_CLR_SIG1)         clr_bits |= SP_STATUS_SIG1;
+	if (flags & SP_SET_SIG1)         set_bits |= SP_STATUS_SIG1;
+	if (flags & SP_CLR_SIG2)         clr_bits |= SP_STATUS_SIG2;
+	if (flags & SP_SET_SIG2)         set_bits |= SP_STATUS_SIG2;
+	if (flags & SP_CLR_SIG3)         clr_bits |= SP_STATUS_SIG3;
+	if (flags & SP_SET_SIG3)         set_bits |= SP_STATUS_SIG3;
+	if (flags & SP_CLR_SIG4)         clr_bits |= SP_STATUS_SIG4;
+	if (flags & SP_SET_SIG4)         set_bits |= SP_STATUS_SIG4;
+	if (flags & SP_CLR_SIG5)         clr_bits |= SP_STATUS_SIG5;
+	if (flags & SP_SET_SIG5)         set_bits |= SP_STATUS_SIG5;
+	if (flags & SP_CLR_SIG6)         clr_bits |= SP_STATUS_SIG6;
+	if (flags & SP_SET_SIG6)         set_bits |= SP_STATUS_SIG6;
+	if (flags & SP_CLR_SIG7)         clr_bits |= SP_STATUS_SIG7;
+	if (flags & SP_SET_SIG7)         set_bits |= SP_STATUS_SIG7;
 
-	set_bits |= (flags & SP_SET_SSTEP) >> 1;
-	set_bits |= (flags & SP_SET_INTR_BREAK) >> 2;
-	set_bits |= (flags & SP_SET_SIG0) >> 3;
-	set_bits |= (flags & SP_SET_SIG1) >> 4;
-	set_bits |= (flags & SP_SET_SIG2) >> 5;
-	set_bits |= (flags & SP_SET_SIG3) >> 6;
-	set_bits |= (flags & SP_SET_SIG4) >> 7;
-	set_bits |= (flags & SP_SET_SIG5) >> 8;
-	set_bits |= (flags & SP_SET_SIG6) >> 9;
-	set_bits |= (flags & SP_SET_SIG7) >> 10;
-
-	u32 new_status = Memory_SP_SetRegisterBits( SP_STATUS_REG, ~clr_bits, set_bits );
+	Memory_SP_SetRegisterBits( SP_STATUS_REG, ~clr_bits, set_bits );
 
 	//
 	// We execute the task here, after we've written to the SP status register.
 	//
-	if (!(new_status & (SP_STATUS_HALT | SP_STATUS_BROKE)))
+	if( start_rsp )
 	{
-		#ifdef DAEDALUS_ENABLE_ASSERTS
-		DAEDALUS_ASSERT( (new_status & SP_STATUS_BROKE) == 0, "Unexpected RSP HLE status %08x", new_status );
-		#endif
 		// Check for tasks whenever the RSP is started
 		RSP_HLE_ProcessTask();
 	}

@@ -31,18 +31,16 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "Graphics/ColourValue.h"
 #include "Utility/Preferences.h"
 
-#if defined(DAEDALUS_PSP)
-#include <pspgu.h>
-#elif defined(DAEDALUS_VITA)
+extern bool gUseRendererLegacy;
+
 #include <vitaGL.h>
-#else
-#include "SysGL/GL.h"
-#endif
 
 #define HD_SCALE                          0.754166f
 
 class CNativeTexture;
 struct TempVerts;
+
+extern v2 aux_trans, aux_scale;
 
 // FIXME - this is for the PSP only.
 struct TextureVtx
@@ -129,9 +127,7 @@ ALIGNED_TYPE(struct, DaedalusLight, 16)
 	f32		qa;				// Used by MM(GBI2 point light)
 	u32		Pad0;			// Padding
 };
-#ifdef DAEDALUS_PSP
-DAEDALUS_STATIC_ASSERT( sizeof( DaedalusLight ) == 64 );	//Size=64 bytes and order is important or VFPU ASM for PSP will fail
-#endif
+
 // Order here should be the same as in TnLMode
 enum ETnLModeFlags
 {
@@ -226,35 +222,33 @@ public:
 
 	// Various rendering states
 	// Don't think we need to updateshademodel, it breaks tiger's honey hunt
-#ifdef DAEDALUS_PSP
-	inline void			SetTnLMode(u32 mode)					{ mTnL.Flags.Modes = mode; /*UpdateFogEnable(); UpdateShadeModel();*/ }
-#else
 	inline void			SetTnLMode(u32 mode)					{ mTnL.Flags.Modes = mode; UpdateFogEnable(); /*UpdateShadeModel();*/ }
-#endif
 	inline void			SetTextureEnable(bool enable)			{ mTnL.Flags.Texture = enable; }
 	inline void			SetTextureTile(u32 tile)				{ mTextureTile = tile; }
 	inline u32			GetTextureTile() const					{ return mTextureTile; }
-#ifdef DAEDALUS_VITA
 	inline void			SetCullMode(bool enable, bool mode)		{ enable ? glEnable(GL_CULL_FACE) : glDisable(GL_CULL_FACE); mode ? glCullFace(GL_BACK) : glCullFace(GL_FRONT); }
-#else
-	inline void			SetCullMode(bool enable, bool mode)		{ mTnL.Flags.TriCull = enable; mTnL.Flags.CullBack = mode; }
-#endif
+
 	// Fog stuff
 	inline void			SetFogMultOffs(f32 Mult, f32 Offs)		{ mTnL.FogMult=Mult/255.0f; mTnL.FogOffs=Offs/255.0f;}
-#ifdef DAEDALUS_PSP
-	inline void			SetFogMinMax(f32 fog_near, f32 fog_far)	{ sceGuFog(fog_near, fog_far, mFogColour.GetColour()); }
-	inline void			SetFogColour( c32 colour )				{ mFogColour = colour; }
-#elif defined(DAEDALUS_VITA)
-	inline void			SetFogMinMax(f32 fog_near, f32 fog_far)	{ glFogf(GL_FOG_START, fog_near / 1000.0f); glFogf(GL_FOG_END, fog_far / 1000.0f); }
-	inline void			SetFogColour( c32 colour )				{ float fog_clr[4] = {colour.GetRf(), colour.GetGf(), colour.GetBf(), colour.GetAf()}; glFogfv(GL_FOG_COLOR, &fog_clr[0]); }
-#endif
+	inline void			SetFogMinMax(f32 fog_near, f32 fog_far)	{ 
+																	if (gUseRendererLegacy) {
+																		glFogf(GL_FOG_START, fog_near / 1000.0f); glFogf(GL_FOG_END, fog_far / 1000.0f);
+																	} else {
+																		mFogNear = fog_near / 1000.0f;
+																		mFogFar = fog_far / 1000.0f;
+																	}
+																}
+	inline void			SetFogColour( c32 colour )				{ 
+																	if (gUseRendererLegacy) {
+																		float fog_clr[4] = {colour.GetRf(), colour.GetGf(), colour.GetBf(), colour.GetAf()};
+																		glFogfv(GL_FOG_COLOR, &fog_clr[0]);
+																	} else {
+																		mFogColour = colour;
+																	}
+																}
 
 	// PrimDepth will replace the z value if depth_source=1 (z range 32767-0 while PSP depthbuffer range 0-65535)//Corn
-#ifdef DAEDALUS_PSP
-	inline void			SetPrimitiveDepth( u32 z )				{ mPrimDepth = (f32)( ( ( 32767 - z ) << 1) + 1 ); }
-#else
 	inline void			SetPrimitiveDepth( u32 z )				{ mPrimDepth = (f32)((int)z - 0x4000) / 16384.0f;}
-#endif
 	inline void			SetPrimitiveLODFraction( f32 f )		{ mPrimLODFraction = f; }
 	inline void			SetPrimitiveColour( c32 colour )		{ mPrimitiveColour = colour; }
 	inline void			SetEnvColour( c32 colour )				{ mEnvColour = colour; }
@@ -272,7 +266,10 @@ public:
 	inline void			SetCoordMod( u32 idx, f32 mod )			{ mTnL.CoordMod[idx] = mod; }
 	inline void			SetMux( u64 mux )						{ mMux = mux; }
 
-	inline void			SetTextureScale(float fScaleX, float fScaleY)	{ mTnL.TextureScaleX = fScaleX; mTnL.TextureScaleY = fScaleY; }
+	inline void			SetTextureScale(float fScaleX, float fScaleY)	{ mTnL.TextureScaleX = fScaleX == 0 ? 1/32.0f : fScaleX; mTnL.TextureScaleY = fScaleY == 0 ? 1/32.0f : fScaleY; }
+	inline void			SetTextureScaleX(u32 ScaleX)	{ mTextureScaleX = ScaleX; }
+	inline void			SetTextureScaleY(u32 ScaleY)	{ mTextureScaleY = ScaleY; }
+	inline void			SetTextureScaleDAM(u32 scale)	{ mDAMTexScale = scale; }
 
 	// TextRect stuff
 	virtual void		TexRect( u32 tile_idx, const v2 & xy0, const v2 & xy1, TexCoord st0, TexCoord st1 ) = 0;
@@ -280,24 +277,21 @@ public:
 	virtual void		FillRect( const v2 & xy0, const v2 & xy1, u32 color ) = 0;
 
 	// Texture stuff
-	virtual void		Draw2DTexture(f32 x0, f32 y0, f32 x1, f32 y1, f32 u0, f32 v0, f32 u1, f32 v1, const CNativeTexture * texture) = 0;
-	virtual void		Draw2DTextureR(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2, f32 x3, f32 y3, f32 s, f32 t, const CNativeTexture * texture) = 0;
+	virtual void		Draw2DTexture(f32 x0, f32 y0, f32 x1, f32 y1, f32 u0, f32 v0, f32 u1, f32 v1) = 0;
+	virtual void		Draw2DTextureR(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2, f32 x3, f32 y3, f32 s, f32 t) = 0;
 
 	// Viewport stuff
 	void				SetN64Viewport( const v2 & scale, const v2 & trans );
 	void				SetScissor( u32 x0, u32 y0, u32 x1, u32 y1 );
 	
 	void				ForceViewport(float w, float h);
-#ifdef DAEDALUS_VITA
+
 	void				SetNegativeViewport();
 	void				SetPositiveViewport();
 	
 	virtual void		DoGamma(float gamma) = 0;
-#endif
+	virtual void		DrawUITexture() = 0;
 
-#ifdef DAEDALUS_DEBUG_DISPLAYLIST
-	void				PrintActive();
-#endif
 	void				ResetMatrices(u32 size);
 	void				SetDKRMat(const u32 address, bool mul, u32 idx);
 	void				SetProjection(const u32 address, bool bReplace);
@@ -310,6 +304,7 @@ public:
 
 	// Vertex stuff
 	void				SetNewVertexInfo(u32 address, u32 v0, u32 n);	// Assumes dwAddress has already been checked!
+	void 				SetNewVertexInfoDAM(u32 address, u32 v0, u32 n); // For Hey You, Pikachu
 	void				SetNewVertexInfoConker(u32 address, u32 v0, u32 n);	// For conker..
 	void				SetNewVertexInfoDKR(u32 address, u32 v0, u32 n, bool billboard);	// Assumes dwAddress has already been checked!
 	void				SetNewVertexInfoPD(u32 address, u32 v0, u32 n);	// Assumes dwAddress has already been checked!
@@ -328,8 +323,10 @@ public:
 	//void				Line3D( u32 v0, u32 v1, u32 width );
 
 	// Returns true if bounding volume is visible within NDC box, false if culled
-	inline bool			TestVerts( u32 v0, u32 vn ) const		{ u32 f=mVtxProjected[v0].ClipFlags; for( u32 i=v0+1; i<=vn; i++ ) f&=mVtxProjected[i].ClipFlags; return f==0; }
-	inline s32			GetVtxDepth( u32 i ) const				{ return (s32)mVtxProjected[ i ].ProjectedPos.z; }
+	bool				TestVerts( u32 v0, u32 vn ) const;
+	
+	inline float		GetVtxDepth( u32 i ) const				{ return mVtxProjected[ i ].ProjectedPos.z; }
+	inline float		GetVtxWeight( u32 i ) const				{ return mVtxProjected[ i ].ProjectedPos.w; }
 	inline v4			GetTransformedVtxPos( u32 i ) const		{ return mVtxProjected[ i ].TransformedPos; }
 	inline v4			GetProjectedVtxPos( u32 i ) const		{ return mVtxProjected[ i ].ProjectedPos; }
 	inline u32			GetVtxFlags( u32 i ) const				{ return mVtxProjected[ i ].ClipFlags; }
@@ -341,35 +338,20 @@ public:
 	inline c32			GetBlendColour() const					{ return mBlendColour; }
 	inline u32			GetFillColour() const					{ return mFillColour; }
 
-#ifdef DAEDALUS_DEBUG_DISPLAYLIST
-	// Rendering stats
-	inline u32			GetNumTrisRendered() const				{ return mNumTrisRendered; }
-	inline u32			GetNumTrisClipped() const				{ return mNumTrisClipped; }
-	inline u32			GetNumRect() const						{ return mNumRect; }
-
-
-	virtual void 		ResetDebugState()						{}
-#endif
-
 	inline float		LightN64ToScreenX(float x) const		{ return x * mN64ToScreenScale.x; }
 	inline float		LightN64ToScreenY(float y) const		{ return y * mN64ToScreenScale.y; }
 	
 	inline float		N64ToScreenX(float x) const				{ return x * mN64ToScreenScale.x + mN64ToScreenTranslate.x; }
 	inline float		N64ToScreenY(float y) const				{ return y * mN64ToScreenScale.y + mN64ToScreenTranslate.y; }
 
-	CRefPtr<CNativeTexture> LoadTextureDirectly( const TextureInfo & ti );
+	void LoadTextureDirectly( const TextureInfo & ti );
+	
+	v2					mVpScale;
+	v2					mVpTrans;
 
 protected:
-#if defined(DAEDALUS_PSP)
-	inline void			UpdateFogEnable()						{ if(gFogEnabled) mTnL.Flags.Fog ? sceGuEnable(GU_FOG) : sceGuDisable(GU_FOG); }
-	inline void			UpdateShadeModel()						{ sceGuShadeModel( mTnL.Flags.Shade ? GU_SMOOTH : GU_FLAT ); }
-#elif defined(DAEDALUS_VITA)
-	inline void			UpdateFogEnable()						{ mTnL.Flags.Fog ? glEnable(GL_FOG) : glDisable(GL_FOG); }
+	inline void			UpdateFogEnable()						{ if (gUseRendererLegacy) { mTnL.Flags.Fog ? glEnable(GL_FOG) : glDisable(GL_FOG); } }
 	inline void			UpdateShadeModel() {}
-#else
-	inline void			UpdateFogEnable()						{ if(gFogEnabled) mTnL.Flags.Fog ? glEnable(GL_FOG) : glDisable(GL_FOG); }
-	inline void			UpdateShadeModel()						{ glShadeModel( mTnL.Flags.Shade ? GL_SMOOTH : GL_FLAT ); }
-#endif
 	void				UpdateTileSnapshots( u32 tile_idx );
 	void				UpdateTileSnapshot( u32 index, u32 tile_idx );
 
@@ -392,22 +374,14 @@ protected:
 		answ.x = roundf( LightN64ToScreenX( roundf( n64_coords.x ) ) );
 		answ.y = roundf( LightN64ToScreenY( roundf( n64_coords.y ) ) );
 	}
-#ifdef DAEDALUS_VITA
 	virtual void		RenderTriangles( uint32_t *colors, u32 num_vertices, bool disable_zbuffer ) = 0;
-#else
-	virtual void		RenderTriangles( DaedalusVtx * p_vertices, u32 num_vertices, bool disable_zbuffer ) = 0;
-#endif
 	void 				TestVFPUVerts( u32 v0, u32 num, const FiddledVtx * verts, const Matrix4x4 & mat_world );
 	template< bool FogEnable, int TextureMode >
 	void ProcessVerts( u32 v0, u32 num, const FiddledVtx * verts, const Matrix4x4 & mat_world );
 
 
 	void				PrepareTrisClipped( TempVerts * temp_verts ) const;
-#ifdef DAEDALUS_VITA
-	uint32_t			PrepareTrisUnclipped( uint32_t **clr );
-#else
-	void				PrepareTrisUnclipped( TempVerts * temp_verts ) const;
-#endif
+	virtual uint32_t	PrepareTrisUnclipped( uint32_t **clr ) = 0;
 	v3					LightVert( const v3 & norm ) const;
 	v3					LightPointVert( const v4 & w ) const;
 
@@ -426,16 +400,15 @@ protected:
 	v2					mN64ToScreenScale;
 	v2					mN64ToScreenTranslate;
 
-	v2					mVpScale;
-	v2					mVpTrans;
-
 	u64					mMux;
 
 	u32					mTextureTile;
 
 	f32					mPrimDepth;
 	f32					mPrimLODFraction;
-
+	
+	f32					mFogNear;
+	f32					mFogFar;
 	c32					mFogColour;				// Blender
 	c32					mPrimitiveColour;		// Combiner
 	c32					mEnvColour;				// Combiner
@@ -481,10 +454,10 @@ protected:
 
 	float				mScreenWidth;
 	float				mScreenHeight;
+	u32					mDAMTexScale;
+	u32					mTextureScaleX, mTextureScaleY;
 
-#if defined(DAEDALUS_GL) || defined(DAEDALUS_VITA)
-	Matrix4x4			mScreenToDevice;					// Used by OSX renderer - scales screen coords (0..640 etc) to device coords (-1..+1)
-#endif
+	Matrix4x4			mScreenToDevice;
 
 	static const u32 	kMaxIndices = 320;					// We need at least 80 verts * 3 = 240? But Flying Dragon uses more than 256 //Corn
 	u16					mIndexBuffer[kMaxIndices];
@@ -493,23 +466,14 @@ protected:
 	// Processed vertices waiting for output...
 	DaedalusVtx4		mVtxProjected[kMaxN64Vertices];		// Transformed and projected vertices (suitable for clipping etc)
 	u32					mVtxClipFlagsUnion;					// Bitwise OR of all the vertex flags added to the current batch. If this is 0, we can trivially accept everything without clipping
-
-
-#ifdef DAEDALUS_DEBUG_DISPLAYLIST
-	//
-	// Stats
-	//
-	u32					mNumTrisRendered;
-	u32					mNumTrisClipped;
-	u32					mNumRect;
-
-	// Debugging
-	bool				mNastyTexture;
-#endif
 };
 
-bool CreateRenderer();
-void DestroyRenderer();
+bool CreateRendererLegacy();
+void DestroyRendererLegacy();
+
+bool CreateRendererModern();
+void DestroyRendererModern();
+
 extern BaseRenderer * gRenderer;
 
 inline s16 ApplyShift(s16 c, u8 shift)

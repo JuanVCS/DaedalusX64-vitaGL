@@ -59,7 +59,6 @@ static EFrameskipValue			GetFrameskipValueFromInt( u32 value );
 
 
 extern EFrameskipValue			gFrameskipValue;
-extern f32 						gZoomX;
 
 SGlobalPreferences				gGlobalPreferences;
 
@@ -411,7 +410,7 @@ SGlobalPreferences::SGlobalPreferences()
 ,	ForceLinearFilter( false )
 ,	RumblePak ( false )
 ,	GuiColor( BLACK )
-,	StickMinDeadzone( 0.28f )
+,	StickMinDeadzone( 0.25f )
 ,	StickMaxDeadzone( 1.0f )
 ,	Language( 0 )
 ,	ViewportType( VT_FULLSCREEN )
@@ -476,20 +475,18 @@ void SRomPreferences::Apply() const
 {
 	gOSHooksEnabled             = PatchesEnabled;
 	gSpeedSyncEnabled           = SpeedSyncEnabled;
-	gDynarecEnabled             = g_ROM.settings.DynarecSupported && DynarecEnabled;
+	gDynarecEnabled             = DynarecEnabled;
 	gDynarecLoopOptimisation	= DynarecLoopOptimisation;	// && g_ROM.settings.DynarecLoopOptimisation;
-	gDynarecDoublesOptimisation	= g_ROM.settings.DynarecDoublesOptimisation || DynarecDoublesOptimisation;
-	gDoubleDisplayEnabled       = g_ROM.settings.DoubleDisplayEnabled && DoubleDisplayEnabled; // I don't know why DD won't disabled if we set ||
-	gCleanSceneEnabled          = g_ROM.settings.CleanSceneEnabled || CleanSceneEnabled;
-	gClearDepthFrameBuffer      = g_ROM.settings.ClearDepthFrameBuffer || ClearDepthFrameBuffer;
-	gAudioRateMatch             = g_ROM.settings.AudioRateMatch || AudioRateMatch;
-	gVideoRateMatch             = g_ROM.settings.VideoRateMatch || VideoRateMatch;
-	gFogEnabled                 = g_ROM.settings.FogEnabled || FogEnabled;
+	gDynarecDoublesOptimisation	= DynarecDoublesOptimisation;
+	gDoubleDisplayEnabled       = DoubleDisplayEnabled; // I don't know why DD won't disabled if we set ||
+	gCleanSceneEnabled          = CleanSceneEnabled;
+	gAudioRateMatch             = AudioRateMatch;
+	gVideoRateMatch             = VideoRateMatch;
+	gFogEnabled                 = FogEnabled;
 	gCheckTextureHashFrequency  = GetTexureHashFrequencyAsFrames( CheckTextureHashFrequency );
-	gMemoryAccessOptimisation   = g_ROM.settings.MemoryAccessOptimisation || MemoryAccessOptimisation;
+	gMemoryAccessOptimisation   = MemoryAccessOptimisation;
 	gFrameskipValue             = Frameskip;
-	gZoomX                      = ZoomX;
-	gCheatsEnabled              = g_ROM.settings.CheatsEnabled || CheatsEnabled;
+	gCheatsEnabled              = CheatsEnabled;
 	gAudioPluginEnabled         = AudioEnabled;
 //	gAdaptFrequency             = AudioAdaptFrequency;
 	gControllerIndex            = ControllerIndex;							//Used during ROM initialization

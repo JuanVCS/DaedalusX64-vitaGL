@@ -129,7 +129,10 @@ bool Save_Reset()
 
 void Save_Fini()
 {
-	Save_Flush(true);
+	gSaveDirty = true;
+	gMempackDirty = true;
+
+	Save_Flush();
 }
 
 void Save_MarkSaveDirty()
@@ -142,9 +145,9 @@ void Save_MarkMempackDirty()
 	gMempackDirty = true;
 }
 
-void Save_Flush(bool force)
+void Save_Flush()
 {
-	if ((gSaveDirty || force) && g_ROM.settings.SaveType != SAVE_TYPE_UNKNOWN)
+	if (gSaveDirty && g_ROM.settings.SaveType != SAVE_TYPE_UNKNOWN)
 	{
 		#ifdef DAEDALUS_DEBUG_CONSOLE
 		DBGConsole_Msg(0, "Saving to [C%s]", gSaveFileName);
@@ -169,7 +172,7 @@ void Save_Flush(bool force)
 		gSaveDirty = false;
 	}
 
-	if (gMempackDirty || force)
+	if (gMempackDirty)
 	{
 		#ifdef DAEDALUS_DEBUG_CONSOLE
 		DBGConsole_Msg(0, "Saving MemPack to [C%s]", gMempackFileName);
@@ -217,7 +220,7 @@ static void InitMempackContent()
 	{
 		u8 * mempack = (u8*)g_pMemoryBuffers[MEM_MEMPACK] + dst_off;
 		
-		memcpy(mempack, gMempackInitialize, 272);
+		memcpy_neon(mempack, gMempackInitialize, 272);
 		
 		for (u32 i = 272; i < 0x8000; i += 2)
 		{

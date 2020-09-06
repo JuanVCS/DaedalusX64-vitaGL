@@ -12,7 +12,6 @@
 #include "Debug/Dump.h"
 #include "Graphics/ColourValue.h"
 #include "Graphics/PngUtil.h"
-#include "SysPSP/Graphics/VideoMemoryManager.h"
 #include "Utility/IO.h"
 #include "Utility/Preferences.h"
 #include "Utility/Profiler.h"
@@ -35,6 +34,8 @@ float *gTexCoordBufferPtr;
 bool new_frame = true;
 
 extern float gamma_val;
+
+static GLuint emu_fb = 0xDEADBEEF, emu_fb_tex, emu_depth_buf_tex;
 
 class IGraphicsContext : public CGraphicsContext
 {
@@ -155,7 +156,23 @@ void IGraphicsContext::ClearColBufferAndDepth(const c32 & colour)
 
 void IGraphicsContext::BeginFrame()
 {
+	if (gPostProcessing) {
+		if (emu_fb == 0xDEADBEEF) {
+			glGenTextures(1, &emu_fb_tex);
+			glBindTexture(GL_TEXTURE_2D, emu_fb_tex);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+			/*glActiveTexture(GL_TEXTURE1);
+			glGenTextures(1, &emu_depth_buf_tex);
+			glBindTexture(GL_TEXTURE_2D, emu_depth_buf_tex);
+			vglTexImageDepthBuffer(GL_TEXTURE_2D);
+			glActiveTexture(GL_TEXTURE0);*/
+			glGenFramebuffers(1, &emu_fb);
+			glBindFramebuffer(GL_FRAMEBUFFER, emu_fb);
+			glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, emu_fb_tex, 0);
+		} else glBindFramebuffer(GL_FRAMEBUFFER, emu_fb);
+	} else glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	vglStartRendering();
+	if (g_ROM.CLEAR_SCENE_HACK) ClearColBuffer( c32(0xff000000) );
 	glEnableClientState(GL_VERTEX_ARRAY);
 	gVertexBuffer = gVertexBufferPtr;
 	gColorBuffer = gColorBufferPtr;
@@ -172,14 +189,62 @@ void IGraphicsContext::EndFrame()
 {
 	glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
 	glScissor( 0, 0, SCR_WIDTH, SCR_HEIGHT);
+	glUseProgram(0);
 	if (gamma_val != 1.0f) gRenderer->DoGamma(gamma_val);
-	DrawInGameMenu();
+	if (!gPostProcessing) {
+		if (gOverlay) {
+			glBindTexture(GL_TEXTURE_2D, cur_overlay);
+			glMatrixMode(GL_PROJECTION);
+			glLoadIdentity();
+			glOrtho(0, 960, 544, 0, -1, 1);
+			gRenderer->DrawUITexture();
+		}
+		DrawInGameMenu();
+	}
+	if (!pause_emu) vglStopRenderingInit();
 	if (gWaitRendering) glFinish();
+	DrawPendingDialog();
 }
 
 void IGraphicsContext::UpdateFrame(bool wait_for_vbl)
 {
 	vglStopRendering();
+	if (gPostProcessing && emu_fb != 0xDEADBEEF) {
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glMatrixMode(GL_PROJECTION);
+		glLoadIdentity();
+		glOrtho(0, 960, 544, 0, -1, 1);
+		vglStartRendering();
+		glBindTexture(GL_TEXTURE_2D, emu_fb_tex);
+		glUseProgram(cur_prog);
+			
+		int i = 0;
+		while (prog_uniforms[i].idx != 0xDEADBEEF) {
+			switch (prog_uniforms[i].type) {
+			case UNIF_FLOAT:
+				glUniform1f(prog_uniforms[i].idx, prog_uniforms[i].value[0]);
+				break;
+			case UNIF_COLOR:
+				glUniform3fv(prog_uniforms[i].idx, 1, prog_uniforms[i].value);
+				break;
+			default:
+				break;
+			}
+			i++;
+		}
+			
+		vglVertexAttribPointerMapped(0, vflux_vertices);
+		vglVertexAttribPointerMapped(1, vflux_texcoords);
+		vglDrawObjects(GL_TRIANGLE_FAN, 4, true);
+		glUseProgram(0);
+		glEnableClientState(GL_VERTEX_ARRAY);
+		if (gOverlay) {
+			glBindTexture(GL_TEXTURE_2D, cur_overlay);
+			gRenderer->DrawUITexture();
+		}
+		DrawInGameMenu();
+		vglStopRendering();
+	}
 	new_frame = true;
 	if (pause_emu) {
 		BeginFrame();
@@ -190,7 +255,6 @@ void IGraphicsContext::UpdateFrame(bool wait_for_vbl)
 
 void IGraphicsContext::SetDebugScreenTarget(ETargetSurface buffer)
 {
-
 }
 
 void IGraphicsContext::ViewportType(u32 *d_width, u32 *d_height) const

@@ -19,6 +19,7 @@ Copyright (C) 2001 StrmnNrmn
 
 #include "stdafx.h"
 #include "ConvertImage.h"
+#include "ConvertFormats.h"
 #include "TextureInfo.h"
 
 #include "DLDebug.h"
@@ -33,19 +34,6 @@ Copyright (C) 2001 StrmnNrmn
 #include "Math/MathUtil.h"
 
 #include "OSHLE/ultra_gbi.h"
-
-uint32_t ConvertYUV16ToRGBA8888(int Y, int U, int V)
-{
-    int R = int(Y + (1.370705f * (V-128)));
-    int G = int(Y - (0.698001f * (V-128)) - (0.337633f * (U-128)));
-    int B = int(Y + (1.732446f * (U-128)));
-
-    R = R < 0 ? 0 : (R>255 ? 255 : R);
-    G = G < 0 ? 0 : (G>255 ? 255 : G);
-    B = B < 0 ? 0 : (B>255 ? 255 : B);
-
-    return (0xFF << 24) | (B << 16) | (G << 8) | R;
-}
 
 namespace
 {
@@ -69,34 +57,6 @@ struct TextureDestInfo
 	void *				Data;			// Pointer to the top left pixel of the image
 	NativePf8888 *		Palette;
 };
-
-static const u8 OneToEight[2] =
-{
-	0x00,		// 0 -> 00 00 00 00
-	0xff		// 1 -> 11 11 11 11
-};
-
-static const u8 ThreeToEight[8] =
-{
-	0x00,		// 000 -> 00 00 00 00
-	0x24,		// 001 -> 00 10 01 00
-	0x49,		// 010 -> 01 00 10 01
-	0x6d,       // 011 -> 01 10 11 01
-	0x92,       // 100 -> 10 01 00 10
-	0xb6,		// 101 -> 10 11 01 10
-	0xdb,		// 110 -> 11 01 10 11
-	0xff		// 111 -> 11 11 11 11
-};
-
-
-static const u8 FourToEight[16] =
-{
-	0x00, 0x11, 0x22, 0x33,
-	0x44, 0x55, 0x66, 0x77,
-	0x88, 0x99, 0xaa, 0xbb,
-	0xcc, 0xdd, 0xee, 0xff
-};
-
 
 template< u32 Size >
 struct SByteswapInfo;
@@ -173,35 +133,6 @@ static void ConvertGeneric( const TextureDestInfo & dsti,
 			dst = reinterpret_cast< OutT * >( (u8*)dst + dsti.Pitch );
 		}
 	}
-}
-
-// FIXME: This function assumes dst is RGBA and little endian machine
-static void ConvertGenericYUVBlocks( const TextureDestInfo & dsti, const TextureInfo & ti)
-{
-	u32 *		dst  = reinterpret_cast< u32 * >( dsti.Data );
-	const u8 *	src  = g_pu8RamBase;
-	u32			src_offset = ti.GetLoadAddress();
-	
-	u32 width = ti.GetWidth();
-	u32 height = ti.GetHeight();
-	
-	u32 *mb = (u32*)(src + src_offset);
-	
-	//yuv macro block contains 16x16 texture.
-	for (u16 h = 0; h < ti.GetHeight(); h++)
-	{
-		for (u16 w = 0; w < ti.GetWidth(); w+=2)
-		{
-			u32 t = *(mb++); //each u32 contains 2 pixels
-			u8 y1 = (u8)(t    )&0xFF;
-			u8 v  = (u8)(t>>8 )&0xFF;
-			u8 y0 = (u8)(t>>16)&0xFF;
-			u8 u  = (u8)(t>>24)&0xFF;
-			*(dst++) = (u32)ConvertYUV16ToRGBA8888(y0, u, v);
-			*(dst++) = (u32)ConvertYUV16ToRGBA8888(y1, u, v);
-		}
-	}
-	
 }
 
 };
@@ -330,21 +261,9 @@ struct SConvert
 												 ConvertRow< OutT, Fiddle, Swizzle >,
 												 ConvertRow< OutT, Fiddle, 0 > );
 	}
-	
-	template < typename OutT >
-	static inline void ConvertYUVTextureT( const TextureDestInfo & dsti, const TextureInfo & ti )
-	{
-		SConvertGeneric< OutT >::ConvertGenericYUVBlocks( dsti, ti);
-	}
 
 	static void ConvertTexture( const TextureDestInfo & dsti, const TextureInfo & ti )
-	{
-		if (ti.GetFormat() == G_IM_FMT_YUV)
-		{
-			ConvertYUVTextureT< NativePf8888 >( dsti, ti ); // NOTE: Hardcoded to RGB8888
-			return;
-		}
-		
+	{		
 		switch( dsti.Format )
 		{
 		case TexFmt_5650:	ConvertTextureT< NativePf5650 >( dsti, ti ); return;
@@ -657,7 +576,50 @@ static void ConvertCI8(const TextureDestInfo & dsti, const TextureInfo & ti)
 
 static void ConvertYUV16(const TextureDestInfo & dsti, const TextureInfo & ti)
 {
-	SConvert< N64Pf8888 >::ConvertTexture( dsti, ti ); // NOTE: Passeed format is just bogus
+	u32 * dst = static_cast<u32*>(dsti.Data);
+	u32 dst_row_stride = dsti.Pitch / sizeof(u32);
+	u32 dst_row_offset = 0;
+
+	const u8 * src = g_pu8RamBase;
+	u32 src_row_stride = ti.GetPitch();
+	u32 src_row_offset = ti.GetLoadAddress();
+
+	u32 width = ti.GetWidth();
+	u32 height = ti.GetHeight();
+
+	// NB! YUV/16 line needs to be doubled.
+	src_row_stride *= 2;
+
+	if (ti.IsSwapped())
+	{
+		//TODO: This should be easy to implement but I would like to find first a game that uses it
+		DAEDALUS_ERROR("Swapped YUV16 textures are not supported yet");
+	}
+	else
+	{
+		for (u32 y = 0; y < height; y++)
+		{
+			u32 src_offset = src_row_offset;
+			u32 dst_offset = dst_row_offset;
+
+			// Do two pixels at a time
+			for (u32 x = 0; x < width; x += 2)
+			{
+				s32 y0 = src[src_offset+2];
+				s32 y1 = src[src_offset+0];
+				s32 u0 = src[src_offset+3];
+				s32 v0 = src[src_offset+1];
+
+				dst[dst_offset+0] = YUV16(y0,u0,v0);
+				dst[dst_offset+1] = YUV16(y1,u0,v0);
+
+				src_offset += 4;
+				dst_offset += 2;
+			}
+			src_row_offset += src_row_stride;
+			dst_row_offset += dst_row_stride;	
+		}
+	}
 }
 
 static void ConvertCI4(const TextureDestInfo & dsti, const TextureInfo & ti)

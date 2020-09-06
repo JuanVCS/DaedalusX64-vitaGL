@@ -38,9 +38,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "Utility/PrintOpCode.h"
 #include "Utility/Profiler.h"
 
-static const bool	gGraphicsEnabled = true;
-static const bool	gAudioEnabled	 = true;
-
 /* JpegTask.cpp */
 extern void jpeg_decode_PS(OSTask *task);
 extern void jpeg_decode_PS0(OSTask *task);
@@ -160,28 +157,7 @@ void RSP_HLE_Finished(u32 setbits)
 
 static EProcessResult RSP_HLE_Graphics()
 {
-	DAEDALUS_PROFILE( "HLE: Graphics" );
-
-	if (gGraphicsEnabled && gGraphicsPlugin != nullptr)
-	{
-		gGraphicsPlugin->ProcessDList();
-	}
-	else
-	{
-		// Skip the entire dlist if graphics are disabled
-		Memory_MI_SetRegisterBits(MI_INTR_REG, MI_INTR_DP);
-		R4300_Interrupt_UpdateCause3();
-	}
-
-
-#ifdef DAEDALUS_BATCH_TEST_ENABLED
-	if (CBatchTestEventHandler * handler = BatchTest_GetHandler())
-	{
-		handler->OnDisplayListComplete();
-	}
-#endif
-
-	return PR_COMPLETED;
+	return gGraphicsPlugin->ProcessDList();
 }
 
 
@@ -189,13 +165,7 @@ static EProcessResult RSP_HLE_Graphics()
 
 static EProcessResult RSP_HLE_Audio()
 {
-	DAEDALUS_PROFILE( "HLE: Audio" );
-
-	if (gAudioEnabled && gAudioPlugin != nullptr)
-	{
-		return gAudioPlugin->ProcessAList();
-	}
-	return PR_COMPLETED;
+	return gAudioPlugin->ProcessAList();
 }
 
 // RSP_HLE_Jpeg and RSP_HLE_CICX105 were borrowed from Mupen64plus
@@ -249,12 +219,12 @@ EProcessResult RSP_HLE_CICX105(OSTask * task)
 				u8 * src = g_pu8SpImemBase + 0x120;
 
 				/* dma_read(0x1120, 0x1e8, 0x1e8) */
-				memcpy(g_pu8SpImemBase + 0x120, g_pu8RamBase + 0x1e8, 0x1f0);
+				memcpy_neon(g_pu8SpImemBase + 0x120, g_pu8RamBase + 0x1e8, 0x1f0);
 
 				/* dma_write(0x1120, 0x2fb1f0, 0xfe817000) */
 				for (i = 0; i < 24; ++i)
 				{
-					memcpy(dst, src, 8);
+					memcpy_neon(dst, src, 8);
 					dst += 0xff0;
 					src += 0x8;
 
@@ -299,6 +269,8 @@ EProcessResult RSP_HLE_Hvqm(OSTask * task)
 void RSP_HLE_ProcessTask()
 {	
 	OSTask * pTask = (OSTask *)(g_pu8SpMemBase + 0x0FC0);
+	
+	//DBGConsole_Msg(0, "RSP Task: Type: %ld, Ptr: 0x%08X, Size: 0x%04X", pTask->t.type, (u32*)(pTask->t.data_ptr), pTask->t.ucode_boot_size);
 
 	EProcessResult	result( PR_NOT_STARTED );
 
@@ -309,7 +281,7 @@ void RSP_HLE_ProcessTask()
 		RSP_HLE_Finished(SP_STATUS_BROKE|SP_STATUS_HALT);
 		return;
 	}
-
+	
 	switch ( pTask->t.type )
 	{
 		case M_GFXTASK:
@@ -317,7 +289,7 @@ void RSP_HLE_ProcessTask()
 			if(Memory_DPC_GetRegister(DPC_STATUS_REG) & DPC_STATUS_FREEZE)
 				return;
 			
-			if (pTask->t.data_ptr == NULL) {
+			if ((u32*)(pTask->t.data_ptr) == nullptr) {
 				result = RSP_HLE_RE2(pTask);
 			} else if (g_ROM.rh.CartID == 0x4B59) { // Yakouchuu II - Satsujin Kouro
 				u32 sum = sum_bytes(g_pu8RamBase + (u32)pTask->t.ucode, 1488);

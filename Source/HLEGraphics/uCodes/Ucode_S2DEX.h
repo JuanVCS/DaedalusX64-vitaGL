@@ -23,42 +23,13 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //*****************************************************************************
 // Needed by S2DEX
 //*****************************************************************************
-
-#define	G_GBI2_SELECT_DL		0x04
-#define	S2DEX_OBJLT_TXTRBLOCK	0x00001033
-#define	S2DEX_OBJLT_TXTRTILE	0x00fc1034
-#define	S2DEX_OBJLT_TLUT		0x00000030
-#define	S2DEX_BGLT_LOADBLOCK	0x0033
-#define	S2DEX_BGLT_LOADTILE		0xfff4
-
-//*****************************************************************************
-//
-//*****************************************************************************
-struct uObjBg
-{
-	u16 imageW;
-	u16 imageX;
-	u16 frameW;
-	s16 frameX;
-	u16 imageH;
-	u16 imageY;
-	u16 frameH;
-	s16 frameY;
-
-	u32 imagePtr;
-	u8  imageSiz;
-	u8  imageFmt;
-	u16 imageLoad;
-	u16 imageFlip;
-	u16 imagePal;
-
-	u16 tmemH;
-	u16 tmemW;
-	u16 tmemLoadTH;
-	u16 tmemLoadSH;
-	u16 tmemSize;
-	u16 tmemSizeW;
-};
+#define S2DEX_OBJLT_TXTRBLOCK   0x00001033
+#define S2DEX_OBJLT_TXTRTILE    0x00fc1034
+#define S2DEX_OBJLT_TLUT        0x00000030
+#define S2DEX_BGLT_LOADBLOCK    0x0033
+#define S2DEX_BGLT_LOADTILE     0xfff4
+#define S2DEX_BG_FLAG_FLIPS     0x01
+#define S2DEX_BG_FLAG_FLIPT     0x10
 
 //*****************************************************************************
 //
@@ -133,43 +104,43 @@ struct	uObjScaleBg
 //*****************************************************************************
 //
 //*****************************************************************************
-struct	uObjTxtrBlock //PSP Format
+struct	uObjTxtrBlock
 {
-	  u32	type;
-	  u32	image;
+	u32	type;
+	u32	image;
 
-	  u16	tsize;
-	  u16	tmem;
+	u16	tsize;
+	u16	tmem;
 
-	  u16	sid;
-	  u16	tline;
+	u16	sid;
+	u16	tline;
 
-	  u32	flag;
-	  u32	mask;
+	u32	flag;
+	u32	mask;
 };
 
 //*****************************************************************************
 //
 //*****************************************************************************
-struct uObjTxtrTile //PSP Format
+struct uObjTxtrTile
 {
-	  u32	type;
-	  u32	image;
+	u32	type;
+	u32	image;
 
-	  u16	twidth;
-	  u16	tmem;
+	u16	twidth;
+	u16	tmem;
 
-	  u16	sid;
-	  u16	theight;
+	u16	sid;
+	u16	theight;
 
-	  u32	flag;
-	  u32	mask;
+	u32	flag;
+	u32	mask;
 };
 
 //*****************************************************************************
 //
 //*****************************************************************************
-struct uObjTxtrTLUT // PSP Format
+struct uObjTxtrTLUT
 {
 	u32	type;
 	u32	image;
@@ -240,16 +211,43 @@ enum ESpriteMode
 };
 
 static uObjTxtr *gObjTxtr = NULL;
-void DLParser_OB_YUV(const uObjSprite *sprite);
+
 //*****************************************************************************
 //
 //*****************************************************************************
-static inline CRefPtr<CNativeTexture> Load_ObjSprite( const uObjSprite *sprite, const uObjTxtr *txtr )
+static void Load_BgSprite( const uObjScaleBg *objBg )
+{
+	TextureInfo ti;
+	ti.SetLoadAddress(RDPSegAddr(objBg->imagePtr));
+	ti.SetFormat(objBg->imageFmt);
+	ti.SetSize(objBg->imageSiz);
+
+	u32 width = objBg->imageW >> 2;
+	u32 height = objBg->imageH >> 2;
+
+	ti.SetWidth(width);
+	ti.SetHeight(height);
+	ti.SetPitch(((((width) << objBg->imageSiz) >> 1) >> 3) << 3); //force 8-bit alignment
+
+	ti.SetSwapped(false);
+	ti.SetPalette(objBg->imagePal);
+	ti.SetTlutAddress(gTlutLoadAddresses[0]);
+	ti.SetTLutFormat(kTT_RGBA16);
+
+	gRenderer->LoadTextureDirectly(ti);
+}
+
+
+
+//*****************************************************************************
+//
+//*****************************************************************************
+static void Load_ObjSprite( const uObjSprite *sprite, const uObjTxtr *txtr )
 {
 	TextureInfo ti;
 
 	// When txtr is NULL, it means TLUT was loaded from ObjLoadTxtr ucode
-	if( txtr == NULL )
+	if( txtr == nullptr )
 	{
 		// Get ti info from TextureDescriptor since there's no txtr for tile or block (txtr = NULL)
 		ti = gRDPStateManager.GetUpdatedTextureDescriptor( gRenderer->GetTextureTile() );
@@ -264,6 +262,10 @@ static inline CRefPtr<CNativeTexture> Load_ObjSprite( const uObjSprite *sprite, 
 		ti.SetSize             (sprite->imageSiz);
 		ti.SetLoadAddress      (RDPSegAddr(txtr->block.image) + (sprite->imageAdrs<<3) );
 		//ti.SetLine		   (0);	// Ensure line is 0?
+		ti.SetSwapped          (0);
+		ti.SetPalette          (sprite->imagePal);
+		ti.SetTlutAddress	   (gTlutLoadAddresses[0]);
+		ti.SetTLutFormat       (kTT_RGBA16);
 
 		switch( txtr->block.type )
 		{
@@ -286,19 +288,16 @@ static inline CRefPtr<CNativeTexture> Load_ObjSprite( const uObjSprite *sprite, 
 			return NULL;
 		}
 
-		ti.SetSwapped          (0);
-		ti.SetPalette          (sprite->imagePal);
-		ti.SetTlutAddress	   (gTlutLoadAddresses[0]);
-		ti.SetTLutFormat       (kTT_RGBA16);
 	}
 
-	return gRenderer->LoadTextureDirectly(ti);
+	gRenderer->LoadTextureDirectly(ti);
 }
 
 //*****************************************************************************
 //
 //*****************************************************************************
-static inline void Draw_ObjSprite( const uObjSprite *sprite, ESpriteMode mode, const CNativeTexture * texture )
+template< ESpriteMode mode > 
+static void Draw_ObjSprite( const uObjSprite *sprite )
 {
 	f32 imageW = sprite->imageW / 32.0f;
 	f32 imageH = sprite->imageH / 32.0f;
@@ -325,50 +324,110 @@ static inline void Draw_ObjSprite( const uObjSprite *sprite, ESpriteMode mode, c
 		y1 = mat2D.C*objW + mat2D.D*objY + mat2D.Y;
 		x3 = mat2D.A*objX + mat2D.B*objH + mat2D.X;
 		y3 = mat2D.C*objX + mat2D.D*objH + mat2D.Y;
-#ifdef DAEDALUS_ENABLE_ASSERTS
-		DAEDALUS_ASSERT((sprite->imageFlags & 1) == 0, "Need to flip X" );
-		DAEDALUS_ASSERT((sprite->imageFlags & 0x10) == 0, "Need to flip Y" );
-#endif
-		gRenderer->Draw2DTextureR(x0, y0, x1, y1, x2, y2, x3, y3, imageW, imageH, texture);
+		
+		// Used by Worms
+		if (sprite->imageFlags & S2DEX_BG_FLAG_FLIPS)
+			Swap< f32 >( x0, x1 );
+		if (sprite->imageFlags & S2DEX_BG_FLAG_FLIPT)
+			Swap< f32 >( y0, y1 );
+
+		gRenderer->Draw2DTextureR(x0, y0, x1, y1, x2, y2, x3, y3, imageW, imageH);
 		break;
 
 	case PARTIAL_ROTATION:
 		x0 = mat2D.X + objX / mat2D.BaseScaleX;
 		y0 = mat2D.Y + objY / mat2D.BaseScaleY;
-		x1 = mat2D.X + objW / mat2D.BaseScaleX - 1.0f;
-		y1 = mat2D.Y + objH / mat2D.BaseScaleY - 1.0f;
+		x1 = mat2D.X + objW / mat2D.BaseScaleX;
+		y1 = mat2D.Y + objH / mat2D.BaseScaleY;
 
 		// Partial rotation doesn't flip sprites
-		gRenderer->Draw2DTexture(x0, y0, x1, y1, 0, 0, imageW, imageH, texture);
+		gRenderer->Draw2DTexture(x0, y0, x1, y1, 0, 0, imageW, imageH);
 		break;
 
 	case NO_ROTATION:
 		x0 = objX;
 		y0 = objY;
-		x1 = objW - 1.0f;
-		y1 = objH - 1.0f;
+		x1 = objW;
+		y1 = objH;
 
 		// Used by Worms
-		if (sprite->imageFlags & 1)
+		if (sprite->imageFlags & S2DEX_BG_FLAG_FLIPS)
 			Swap< f32 >( x0, x1 );
 
-		if (sprite->imageFlags & 0x10)
+		if (sprite->imageFlags & S2DEX_BG_FLAG_FLIPT)
 			Swap< f32 >( y0, y1 );
 
-		gRenderer->Draw2DTexture(x0, y0, x1, y1, 0, 0, imageW, imageH, texture);
+		gRenderer->Draw2DTexture(x0, y0, x1, y1, 0, 0, imageW, imageH);
 		break;
 	}
 }
+
+//*****************************************************************************
+//
+//*****************************************************************************
+//Ogre Battle needs to copy YUV texture to frame buffer
+void DLParser_OB_YUV(const uObjSprite *sprite)
+{
+	f32 imageW = sprite->imageW / 32.0f;
+	f32 imageH = sprite->imageH / 32.0f;
+	f32 scaleW = sprite->scaleW / 1024.0f;
+	f32 scaleH = sprite->scaleH / 1024.0f;
+
+	f32 objX = sprite->objX / 4.0f;
+	f32 objY = sprite->objY / 4.0f;
+
+	u16 ul_x = (u16)(objX/mat2D.BaseScaleX + mat2D.X);
+	u16 lr_x = (u16)((objX + imageW/scaleW)/mat2D.BaseScaleX + mat2D.X);
+	u16 ul_y = (u16)(objY/mat2D.BaseScaleY + mat2D.Y);
+	u16 lr_y = (u16)((objY + imageH/scaleH)/mat2D.BaseScaleY + mat2D.Y);
+
+	u32 ci_width = g_CI.Width;
+	u32 ci_height = scissors.bottom;
+
+	if ((ul_x >= ci_width) || (ul_y >= ci_height))
+		return;
+
+	u32 width = 16;
+	u32 height = 16;
+
+	if (lr_x > ci_width) width = ci_width - ul_x;
+	if (lr_y > ci_height) height = ci_height - ul_y;
+
+	const u32 *mb = (const u32*)(g_pu8RamBase + g_TI.Address); //pointer to the first macro block
+	u16 *dst = (u16*)(g_pu8RamBase + g_CI.Address);
+	dst += ul_x + ul_y * ci_width;
+	
+	
+	//yuv macro block contains 16x16 texture. we need to put it in the proper place inside cimg
+	for (u16 h = 0; h < 16; h++)
+	{
+		for (u16 w = 0; w < 16; w+=2)
+		{
+			u32 t = *(mb++); //each u32 contains 2 pixels
+			if ((h < height) && (w < width)) //clipping. texture image may be larger than color image
+			{
+				u8 y0 = (u8)(t      ) & 0xFF;
+				u8 v  = (u8)(t >> 8 ) & 0xFF;
+				u8 y1 = (u8)(t >> 16) & 0xFF;
+				u8 u  = (u8)(t >> 24) & 0xFF;
+				*(dst++) = YUVtoRGBA(y0, u, v);
+				*(dst++) = YUVtoRGBA(y1, u, v);
+			}
+		}
+		dst += ci_width - 16;
+	}
+}
+
 //*****************************************************************************
 //
 //*****************************************************************************
 // Bomberman : Second Atatck uses this
 void DLParser_S2DEX_ObjSprite( MicroCodeCommand command )
 {
-	uObjSprite *sprite = (uObjSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
+	const uObjSprite *sprite = (const uObjSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
 
-	CRefPtr<CNativeTexture> texture = Load_ObjSprite( sprite, NULL );
-	Draw_ObjSprite( sprite, FULL_ROTATION, texture );
+	Load_ObjSprite( sprite, NULL );
+	Draw_ObjSprite< FULL_ROTATION >( sprite );
 }
 
 //*****************************************************************************
@@ -378,25 +437,24 @@ void DLParser_S2DEX_ObjSprite( MicroCodeCommand command )
 // Note : This cmd loads textures from both ObjTxtr and LoadBlock/LoadTile!!
 void DLParser_S2DEX_ObjRectangle( MicroCodeCommand command )
 {
-	uObjSprite *sprite = (uObjSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
+	const uObjSprite *sprite = (const uObjSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
 
-	CRefPtr<CNativeTexture> texture = Load_ObjSprite( sprite, gObjTxtr );
-	Draw_ObjSprite( sprite, NO_ROTATION, texture );
+	Load_ObjSprite( sprite, gObjTxtr );
+	Draw_ObjSprite< NO_ROTATION >( sprite );
 }
 
 //*****************************************************************************
 //
 //*****************************************************************************
-// Untested.. I can't find any game that uses this.. but it should work fine
 void DLParser_S2DEX_ObjRectangleR( MicroCodeCommand command )
 {
-	uObjSprite *sprite = (uObjSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
+	const uObjSprite *sprite = (const uObjSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
 	
 	if (sprite->imageFmt == G_IM_FMT_YUV)
 		DLParser_OB_YUV(sprite);
 	
-	CRefPtr<CNativeTexture> texture = Load_ObjSprite( sprite, gObjTxtr );
-	Draw_ObjSprite( sprite, PARTIAL_ROTATION, texture );
+	Load_ObjSprite( sprite, gObjTxtr );
+	Draw_ObjSprite< PARTIAL_ROTATION >( sprite );
 }
 
 //*****************************************************************************
@@ -405,10 +463,10 @@ void DLParser_S2DEX_ObjRectangleR( MicroCodeCommand command )
 // Nintendo logo, shade, items, enemies & foes, sun, and pretty much everything in Yoshi
 void DLParser_S2DEX_ObjLdtxSprite( MicroCodeCommand command )
 {
-	uObjTxSprite *sprite = (uObjTxSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
+	const uObjTxSprite *sprite = (const uObjTxSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
 
-	CRefPtr<CNativeTexture> texture = Load_ObjSprite( &sprite->sprite, &sprite->txtr );
-	Draw_ObjSprite( &sprite->sprite, FULL_ROTATION, texture );
+	Load_ObjSprite( &sprite->sprite, &sprite->txtr );
+	Draw_ObjSprite< FULL_ROTATION >( &sprite->sprite );
 }
 
 //*****************************************************************************
@@ -417,10 +475,10 @@ void DLParser_S2DEX_ObjLdtxSprite( MicroCodeCommand command )
 // No Rotation. Intro logo, Awesome command screens and HUD in game :)
 void DLParser_S2DEX_ObjLdtxRect( MicroCodeCommand command )
 {
-	uObjTxSprite *sprite = (uObjTxSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
+	const uObjTxSprite *sprite = (const uObjTxSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
 
-	CRefPtr<CNativeTexture> texture = Load_ObjSprite( &sprite->sprite, &sprite->txtr );
-	Draw_ObjSprite( &sprite->sprite, NO_ROTATION, texture );
+	Load_ObjSprite( &sprite->sprite, &sprite->txtr );
+	Draw_ObjSprite< NO_ROTATION >( &sprite->sprite );
 }
 
 //*****************************************************************************
@@ -429,10 +487,10 @@ void DLParser_S2DEX_ObjLdtxRect( MicroCodeCommand command )
 // With Rotation. Text, smoke, and items in Yoshi
 void DLParser_S2DEX_ObjLdtxRectR( MicroCodeCommand command )
 {
-	uObjTxSprite *sprite = (uObjTxSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
+	const uObjTxSprite *sprite = (const uObjTxSprite*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
 
-	CRefPtr<CNativeTexture> texture = Load_ObjSprite( &sprite->sprite, &sprite->txtr );
-	Draw_ObjSprite( &sprite->sprite, PARTIAL_ROTATION, texture );
+	Load_ObjSprite( &sprite->sprite, &sprite->txtr );
+	Draw_ObjSprite< PARTIAL_ROTATION >( &sprite->sprite );
 }
 
 //*****************************************************************************
@@ -446,7 +504,7 @@ void DLParser_S2DEX_ObjMoveMem( MicroCodeCommand command )
 
 	if( index == 0 )	// Mtx
 	{
-		uObjMtx* mtx = (uObjMtx *)(addr+g_pu8RamBase);
+		const uObjMtx* mtx = (const uObjMtx *)(addr+g_pu8RamBase);
 		mat2D.A = mtx->A/65536.0f;
 		mat2D.B = mtx->B/65536.0f;
 		mat2D.C = mtx->C/65536.0f;
@@ -458,7 +516,7 @@ void DLParser_S2DEX_ObjMoveMem( MicroCodeCommand command )
 	}
 	else if( index == 2 )	// Sub Mtx
 	{
-		uObjSubMtx* sub = (uObjSubMtx*)(addr+g_pu8RamBase);
+		const uObjSubMtx* sub = (const uObjSubMtx*)(addr+g_pu8RamBase);
 		mat2D.X = f32(sub->X>>2);
 		mat2D.Y = f32(sub->Y>>2);
 		mat2D.BaseScaleX = sub->BaseScaleX/1024.0f;
@@ -472,7 +530,7 @@ void DLParser_S2DEX_ObjMoveMem( MicroCodeCommand command )
 // Kirby uses this for proper palette loading
 void DLParser_S2DEX_ObjLoadTxtr( MicroCodeCommand command )
 {
-	uObjTxtr* ObjTxtr = (uObjTxtr*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
+	const uObjTxtr* ObjTxtr = (const uObjTxtr*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
 	
 	g_TI.Format		= G_IM_FMT_RGBA;
 	g_TI.Size		= G_IM_SIZ_16b;
@@ -527,9 +585,7 @@ inline void DLParser_Yoshi_MemRect( MicroCodeCommand command )
 
 	if (y1 > scissors.bottom)
 		y1 = scissors.bottom;
-#ifdef DAEDALUS_DEBUG_DISPLAYLIST
-	DL_PF ("    MemRect->Addr[0x%08x] (%d, %d -> %d, %d) Width[%d]", tile_addr, x0, y0, mem_rect.x1, y1, g_CI.Width);
-#endif
+
 #if 1	//1->Optimized, 0->Generic
 	// This assumes Yoshi always copy 16 bytes per line and dst is aligned and we force alignment on src!!! //Corn
 	u32 tex_width = rdp_tile.line << 3;
@@ -557,83 +613,10 @@ inline void DLParser_Yoshi_MemRect( MicroCodeCommand command )
 	{
 		u8 *src = texaddr + (y - y0) * tex_width;
 		u8 *dst = fbaddr + y * g_CI.Width;
-		memcpy(dst, src, width);
+		memcpy_neon(dst, src, width);
 	}
 #endif
 
-}
-
-static u16 YUVtoRGBA(u8 y, u8 u, u8 v)
-{
-	f32 r = y + (1.370705f * (v-128));
-	f32 g = y - (0.698001f * (v-128)) - (0.337633f * (u-128));
-	f32 b = y + (1.732446f * (u-128));
-	r *= 0.125f;
-	g *= 0.125f;
-	b *= 0.125f;
-
-	//clipping the result
-	if (r > 31) r = 31;
-	if (g > 31) g = 31;
-	if (b > 31) b = 31;
-	if (r < 0) r = 0;
-	if (g < 0) g = 0;
-	if (b < 0) b = 0;
-	
-	return (u16)(((u16)(r) << 11) |((u16)(g) << 6) |((u16)(b) << 1) | 1);
-}
-
-//Ogre Battle needs to copy YUV texture to frame buffer
-void DLParser_OB_YUV(const uObjSprite *sprite)
-{
-	f32 imageW = sprite->imageW / 32.0f;
-	f32 imageH = sprite->imageH / 32.0f;
-	f32 scaleW = sprite->scaleW / 1024.0f;
-	f32 scaleH = sprite->scaleH / 1024.0f;
-
-	f32 objX = sprite->objX / 4.0f;
-	f32 objY = sprite->objY / 4.0f;
-
-	u16 ul_x = (u16)(objX/mat2D.BaseScaleX + mat2D.X);
-	u16 lr_x = (u16)((objX + imageW/scaleW)/mat2D.BaseScaleX + mat2D.X);
-	u16 ul_y = (u16)(objY/mat2D.BaseScaleY + mat2D.Y);
-	u16 lr_y = (u16)((objY + imageH/scaleH)/mat2D.BaseScaleY + mat2D.Y);
-
-	u32 ci_width = g_CI.Width;
-	u32 ci_height = scissors.bottom;
-
-	if ((ul_x >= ci_width) || (ul_y >= ci_height))
-		return;
-
-	u32 width = 16;
-	u32 height = 16;
-
-	if (lr_x > ci_width)	width = ci_width - ul_x;
-	if (lr_y > ci_height)	height = ci_height - ul_y;
-
-	u32 *mb = (u32*)(g_pu8RamBase + g_TI.Address); //pointer to the first macro block
-	u16 *dst = (u16*)(g_pu8RamBase + g_CI.Address);
-	dst += ul_x + ul_y * ci_width;
-	
-	
-	//yuv macro block contains 16x16 texture. we need to put it in the proper place inside cimg
-	for (u16 h = 0; h < 16; h++)
-	{
-		for (u16 w = 0; w < 16; w+=2)
-		{
-			u32 t = *(mb++); //each u32 contains 2 pixels
-			if ((h < height) && (w < width)) //clipping. texture image may be larger than color image
-			{
-				u8 y0 = (u8)(t      ) & 0xFF;
-				u8 v  = (u8)(t >> 8 ) & 0xFF;
-				u8 y1 = (u8)(t >> 16) & 0xFF;
-				u8 u  = (u8)(t >> 24) & 0xFF;
-				*(dst++) = YUVtoRGBA(y0, u, v);
-				*(dst++) = YUVtoRGBA(y1, u, v);
-			}
-		}
-		dst += ci_width - 16;
-	}
 }
 
 //*****************************************************************************
@@ -657,9 +640,6 @@ void DLParser_S2DEX_RDPHalf_0( MicroCodeCommand command )
 //*****************************************************************************
 void DLParser_S2DEX_ObjRendermode( MicroCodeCommand command )
 {
-	#ifdef DAEDALUS_DEBUG_DISPLAYLIST
-	DL_PF( "    S2DEX_ObjRendermode (Ignored)" );
-	#endif
 }
 
 //*****************************************************************************
@@ -667,9 +647,6 @@ void DLParser_S2DEX_ObjRendermode( MicroCodeCommand command )
 //*****************************************************************************
 void DLParser_S2DEX_SelectDl( MicroCodeCommand command )
 {
-	#ifdef DAEDALUS_DEBUG_DISPLAYLIST
-	DL_PF( "    S2DEX_SelectDl (Ignored)" );
-	#endif
 }
 
 //*****************************************************************************
@@ -677,10 +654,11 @@ void DLParser_S2DEX_SelectDl( MicroCodeCommand command )
 //*****************************************************************************
 void DLParser_S2DEX_BgCopy( MicroCodeCommand command )
 {
-#ifdef DAEDALUS_DEBUG_DISPLAYLIST
-	DL_PF("    DLParser_S2DEX_BgCopy");
-#endif
-	uObjBg *objBg = (uObjBg*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
+	const uObjScaleBg *objBg = (const uObjScaleBg*)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
+	
+	TextureInfo ti;
+
+	Load_BgSprite(objBg);
 
 	u16 imageX = objBg->imageX >> 5;
 	u16 imageY = objBg->imageY >> 5;
@@ -693,26 +671,8 @@ void DLParser_S2DEX_BgCopy( MicroCodeCommand command )
 	u16 frameW = (objBg->frameW >> 2) + frameX;
 	u16 frameH = (objBg->frameH >> 2) + frameY;
 
-	TextureInfo ti;
-
-	ti.SetFormat           (objBg->imageFmt);
-	ti.SetSize             (objBg->imageSiz);
-
-	ti.SetLoadAddress      (RDPSegAddr(objBg->imagePtr));
-	ti.SetWidth            (imageW);
-	ti.SetHeight           (imageH);
-	ti.SetPitch			   ((((imageW << objBg->imageSiz) >> 1)>>3)<<3); //force 8-bit alignment
-
-	ti.SetSwapped          (0);
-
-	ti.SetPalette          (objBg->imagePal);
-	ti.SetTlutAddress	   (gTlutLoadAddresses[0]);
-	ti.SetTLutFormat       (kTT_RGBA16);
-
-	CRefPtr<CNativeTexture> texture = gRenderer->LoadTextureDirectly(ti);
 	gRenderer->Draw2DTexture( (float)frameX, (float)frameY, (float)frameW, (float)frameH,
-							  (float)imageX, (float)imageY, (float)imageW, (float)imageH,
-							  texture );
+							  (float)imageX, (float)imageY, (float)imageW, (float)imageH);
 }
 
 //*****************************************************************************
@@ -723,8 +683,10 @@ void DLParser_S2DEX_Bg1cyc( MicroCodeCommand command )
 	if( g_ROM.GameHacks == ZELDA_MM )
 		return;
 
-	uObjScaleBg *objBg = (uObjScaleBg *)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
-
+	const uObjScaleBg *objBg = (const uObjScaleBg *)(g_pu8RamBase + RDPSegAddr(command.inst.cmd1));
+	
+	Load_BgSprite( objBg );
+	
 	f32 frameX = objBg->frameX / 4.0f;
 	f32 frameY = objBg->frameY / 4.0f;
 
@@ -740,30 +702,12 @@ void DLParser_S2DEX_Bg1cyc( MicroCodeCommand command )
 	f32 imageW = objBg->imageW/4.0f;
 	f32 imageH = objBg->imageH/4.0f;
 
-	TextureInfo ti;
-
-	ti.SetFormat           (objBg->imageFmt);
-	ti.SetSize             (objBg->imageSiz);
-
-	ti.SetLoadAddress      (RDPSegAddr(objBg->imagePtr));
-	ti.SetWidth            (objBg->imageW/4);
-	ti.SetHeight           (objBg->imageH/4);
-	ti.SetPitch			   ((((objBg->imageW/4 << ti.GetSize()) >> 1)>>3)<<3); //force 8-bit alignment, this what sets our correct viewport.
-
-	ti.SetSwapped          (0);
-
-	ti.SetPalette		   (objBg->imagePal);
-	ti.SetTlutAddress	   (gTlutLoadAddresses[0]);
-	ti.SetTLutFormat       (kTT_RGBA16);
-
-	CRefPtr<CNativeTexture> texture = gRenderer->LoadTextureDirectly(ti);
-
 	if (g_ROM.GameHacks != YOSHI)
 	{
 		f32 s1 = (frameW-frameX)*scaleX + imageX;
 		f32 t1 = (frameH-frameY)*scaleY + imageY;
 
-		gRenderer->Draw2DTexture( frameX, frameY, frameW, frameH, imageX, imageY, s1, t1, texture );
+		gRenderer->Draw2DTexture(frameX, frameY, frameW, frameH, imageX, imageY, s1, t1);
 	}
 	else
 	{
@@ -773,10 +717,10 @@ void DLParser_S2DEX_Bg1cyc( MicroCodeCommand command )
 		f32 u1 = (frameW-x2)*scaleX;
 		f32 v1 = (frameH-y2)*scaleY;
 
-		gRenderer->Draw2DTexture(frameX, frameY, x2, y2, imageX, imageY, imageW, imageH, texture);
-		gRenderer->Draw2DTexture(x2, frameY, frameW, y2, 0, imageY, u1, imageH, texture);
-		gRenderer->Draw2DTexture(frameX, y2, x2, frameH, imageX, 0, imageW, v1, texture);
-		gRenderer->Draw2DTexture(x2, y2, frameW, frameH, 0, 0, u1, v1, texture);
+		gRenderer->Draw2DTexture(frameX, frameY, x2, y2, imageX, imageY, imageW, imageH);
+		gRenderer->Draw2DTexture(x2, frameY, frameW, y2, 0, imageY, u1, imageH);
+		gRenderer->Draw2DTexture(frameX, y2, x2, frameH, imageX, 0, imageW, v1);
+		gRenderer->Draw2DTexture(x2, y2, frameW, frameH, 0, 0, u1, v1);
 	}
 }
 

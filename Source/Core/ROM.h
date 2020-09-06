@@ -117,6 +117,7 @@ enum EGameHacks
 	BANJO_TOOIE,
 	POKEMON_STADIUM,
 	QUAKE,
+	WCW_NITRO,
 	MAX_HACK_NAMES	//DONT CHANGE THIS! AND SHOULD BE LAST ENTRY
 };
 
@@ -151,9 +152,9 @@ struct RomInfo
 			u32			SKIP_CPU_REND_HACK:1;	//Hack to disable CPU rendering at boot
 			u32			SKIP_MSG_SEND_HACK:1;	//Dummies osSendMesg
 			u32			KEEP_MODE_H_HACK:1;		//Hack to prevent RDP OtherMode H reset
-			u32			PadD:1;	//free
-			u32			PadE:1;	//free
-			u32			PadF:1;	//free
+			u32			PROJ_HACK:1;			//Hack to vertically flip projection matrix for 3D rendering
+			u32			CLEAR_DEPTH_HACK:1;		//Hack to clear depth framebuffer at the beginning of a frame
+			u32			CLEAR_SCENE_HACK:1;		//Hack to clear framebuffer at beginning of a frame
 		};
 	};
 };

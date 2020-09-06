@@ -49,6 +49,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "Utility/Stream.h"
 #include "Utility/Synchroniser.h"
 
+#ifdef DAEDALUS_VITA
+#include "SysVita/UI/Menu.h"
+#endif
+
 #if defined(DAEDALUS_ENABLE_DYNAREC_PROFILE) || defined(DAEDALUS_W32)
 // This isn't really the most appropriate place. Need to check with
 // the graphics plugin really
@@ -63,7 +67,7 @@ static void DumpROMInfo( const ROMHeader & header )
 	#ifdef DAEDALUS_DEBUG_CONSOLE
 	DBGConsole_Msg(0, "Header:          0x%02x%02x%02x%02x", header.x1, header.x2, header.x3, header.x4);
 	DBGConsole_Msg(0, "Clockrate:       0x%08x", header.ClockRate);
-	DBGConsole_Msg(0, "BootAddr:        0x%08x", SwapEndian(header.BootAddress));
+	DBGConsole_Msg(0, "BootAddr:        0x%08x", BSWAP32(header.BootAddress));
 	DBGConsole_Msg(0, "Release:         0x%08x", header.Release);
 	DBGConsole_Msg(0, "CRC1:            0x%08x", header.CRC1);
 	DBGConsole_Msg(0, "CRC2:            0x%08x", header.CRC2);
@@ -196,7 +200,15 @@ static void ROM_SimulatePIFBoot( ECicType cic_chip, u32 Country )
 		case CIC_6101:
 			gGPR[22]._u64=0x000000000000003FLL;
 			break;
-		case CIC_6102:
+		case CIC_8303: //64DD IPL CIC
+		case CIC_DDTL: //64DD IPL TOOL CIC
+		case CIC_5167: //64DD CONVERSION CIC
+			gGPR[22]._u64=0x00000000000000DDLL;
+			break;
+		case CIC_DDUS: //64DD US IPL CIC
+			gGPR[22]._u64=0x00000000000000DELL;
+			break;
+		case CIC_6102: 
 			gGPR[1]._u64=0x0000000000000001LL;
 			gGPR[2]._u64=0x000000000EBDA536LL;
 			gGPR[3]._u64=0x000000000EBDA536LL;
@@ -347,6 +359,7 @@ void SpecificGameHacks( const ROMHeader & id )
 	case 0x4441: g_ROM.GameHacks = WORMS_ARMAGEDDON;	break;
 	case 0x4F50: g_ROM.GameHacks = POKEMON_STADIUM;		break;
 	case 0x3350: g_ROM.GameHacks = POKEMON_STADIUM;		break; // Pokemon Stadium 2
+	case 0x3357: g_ROM.GameHacks = WCW_NITRO;			break;
 	case 0x4B51:	// Quake 64
 		g_ROM.GameHacks = QUAKE;
 		g_ROM.KEEP_MODE_H_HACK = true;
@@ -401,20 +414,26 @@ void SpecificGameHacks( const ROMHeader & id )
 	case 0x4c5a:	//ZELDA_OOT
 		g_ROM.ZELDA_HACK = true;
 		g_ROM.SKIP_MSG_SEND_HACK = true;
+		g_ROM.CLEAR_DEPTH_HACK = true;
 		g_ROM.GameHacks = ZELDA_OOT;
 		break;
 	case 0x4F44:	//DK64
 		g_ROM.SET_ROUND_MODE = true;
+		g_ROM.CLEAR_DEPTH_HACK = true;
 		g_ROM.GameHacks = DK64;
 		break;
 	case 0x535a:	//ZELDA_MM
 		g_ROM.TLUT_HACK = true;
 		g_ROM.ZELDA_HACK = true;
+		g_ROM.CLEAR_DEPTH_HACK = true;
 		g_ROM.GameHacks = ZELDA_MM;
 		break;
 	case 0x5653:	//SSV
 		g_ROM.LOAD_T1_HACK = true;
 		g_ROM.TLUT_HACK = true;
+		break;
+	case 0x5A46:	//F-Zero X
+		g_ROM.CLEAR_SCENE_HACK = true;
 		break;
 	case 0x5546:	//Conker's Bad Fur Day
 		g_ROM.SKIP_CPU_REND_HACK = true;
@@ -442,12 +461,16 @@ void SpecificGameHacks( const ROMHeader & id )
 		break;
 	case 0x4842:	//Body Harvest
 	case 0x434E:	//Nightmare Creatures
-	case 0x5543:	//Cruisn' USA
+	case 0x5543:	//Cruis'n USA
 		g_ROM.GameHacks = BODY_HARVEST;
 		break;
-	case 0x5453:    //Eiko no Saint Andrews
+	case 0x5453:    //Eikou no Saint Andrews
 	case 0x4646:    //Fighting Force 64
+	case 0x594D:    //Mortal Kombat Mythologies: Sub-Zero
 		g_ROM.SCISSOR_HACK = true;
+		break;
+	case 0x4350:    // Pachinko 365 Nichi
+		g_ROM.PROJ_HACK = true;
 		break;
 	default:
 		break;
@@ -458,7 +481,7 @@ void SpecificGameHacks( const ROMHeader & id )
 void ROM_GetRomNameFromHeader( std::string & rom_name, const ROMHeader & header )
 {
 	char	buffer[20+1];
-	memcpy( buffer, header.Name, 20 );
+	memcpy_neon( buffer, header.Name, 20 );
 	buffer[20] = '\0';
 
 	rom_name = buffer;
@@ -539,7 +562,6 @@ bool ROM_LoadFile(const RomID & rom_id, const RomSettings & settings, const SRom
 
 	#ifdef DAEDALUS_DEBUG_CONSOLE
 	DBGConsole_Msg(0, "[G%s]", g_ROM.settings.GameName.c_str());
-	DBGConsole_Msg(0, "This game has been certified as [G%s] (%s)", g_ROM.settings.Comment.c_str(), g_ROM.settings.Info.c_str());
 	DBGConsole_Msg(0, "SaveType: [G%s]", ROM_GetSaveTypeName( g_ROM.settings.SaveType ) );
 	DBGConsole_Msg(0, "ApplyPatches: [G%s]", gOSHooksEnabled ? "on" : "off");
 	DBGConsole_Msg(0, "Check Texture Hash Freq: [G%d]", gCheckTextureHashFrequency);
@@ -614,6 +636,21 @@ struct CountryIDInfo
 
 static const CountryIDInfo g_CountryCodeInfo[] =
 {
+#ifdef DAEDALUS_VITA
+	{  0,  lang_strings[STR_UNKNOWN],		OS_TV_NTSC },
+	{ '7', "Beta",							OS_TV_NTSC },
+	{ 'A', "NTSC",							OS_TV_NTSC },
+	{ 'D', lang_strings[STR_REGION_GER],	OS_TV_PAL },
+	{ 'E', lang_strings[STR_REGION_USA],	OS_TV_NTSC },
+	{ 'F', lang_strings[STR_REGION_FRA],	OS_TV_PAL },
+	{ 'I', lang_strings[STR_REGION_ITA],	OS_TV_PAL },
+	{ 'J', lang_strings[STR_REGION_JAP],	OS_TV_NTSC },
+	{ 'P', lang_strings[STR_REGION_EUR],	OS_TV_PAL },
+	{ 'S', lang_strings[STR_REGION_ESP],	OS_TV_PAL },
+	{ 'U', lang_strings[STR_REGION_AUS],	OS_TV_PAL },
+	{ 'X', "PAL",							OS_TV_PAL },
+	{ 'Y', "PAL",							OS_TV_PAL }
+#else
 	{  0,  "0",			OS_TV_NTSC },
 	{ '7', "Beta",		OS_TV_NTSC },
 	{ 'A', "NTSC",		OS_TV_NTSC },
@@ -627,12 +664,13 @@ static const CountryIDInfo g_CountryCodeInfo[] =
 	{ 'U', "Australia", OS_TV_PAL },
 	{ 'X', "PAL",		OS_TV_PAL },
 	{ 'Y', "PAL",		OS_TV_PAL }
+#endif
 };
 
 // Get a string representing the country name from an ID value
 const char * ROM_GetCountryNameFromID( u8 country_id )
 {
-	for (u32 i {}; i < ARRAYSIZE( g_CountryCodeInfo ); i++)
+	for (u32 i = 0; i < ARRAYSIZE( g_CountryCodeInfo ); i++)
 	{
 		if (g_CountryCodeInfo[i].CountryID == country_id)
 		{
@@ -640,12 +678,12 @@ const char * ROM_GetCountryNameFromID( u8 country_id )
 		}
 	}
 
-	return "?";
+	return lang_strings[STR_UNKNOWN];
 }
 
 u32 ROM_GetTvTypeFromID( u8 country_id )
 {
-	for (u32 i {}; i < ARRAYSIZE( g_CountryCodeInfo ); i++)
+	for (u32 i = 0; i < ARRAYSIZE( g_CountryCodeInfo ); i++)
 	{
 		if (g_CountryCodeInfo[i].CountryID == country_id)
 		{

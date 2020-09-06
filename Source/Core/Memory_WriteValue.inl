@@ -221,20 +221,17 @@ static void WriteValue_8440_844F( u32 address, u32 value )
 	switch (offset)
 	{
 	case 0x0:	// VI_CONTROL_REG
-	#ifdef DAEDALUS_DEBUG_CONSOLE
+#ifdef DAEDALUS_DEBUG_CONSOLE
 		DPF( DEBUG_VI, "VI_CONTROL_REG set to 0x%08x", value );
-		#endif
+#endif
 #ifdef DAEDALUS_LOG
 		DisplayVIControlInfo(value);
 #endif
-		if (gGraphicsPlugin != NULL)
-		{
-			gGraphicsPlugin->ViStatusChanged();
-		}
+		gGraphicsPlugin->ViStatusChanged();
 		break;
 
 	case 0x4:	// VI_ORIGIN_REG
-	#ifdef DAEDALUS_DEBUG_CONSOLE
+#ifdef DAEDALUS_DEBUG_CONSOLE
 		DPF( DEBUG_VI, "VI_ORIGIN_REG set to %d", value );
 #endif
 		 // NB: if no display lists executed, interpret framebuffer
@@ -255,23 +252,20 @@ static void WriteValue_8440_844F( u32 address, u32 value )
 #ifdef DAEDALUS_DEBUG_CONSOLE
 		DPF( DEBUG_VI, "VI_WIDTH_REG set to %d pixels", value );
 #endif
-		if (gGraphicsPlugin != NULL)
-		{
-			gGraphicsPlugin->ViWidthChanged();
-		}
+		gGraphicsPlugin->ViWidthChanged();
 		break;
 
 	case 0x10:	// VI_CURRENT_REG
-	#ifdef DAEDALUS_DEBUG_CONSOLE
+#ifdef DAEDALUS_DEBUG_CONSOLE
 		DPF( DEBUG_VI, "VI_CURRENT_REG set to 0x%08x", value );
 		// Any write clears interrupt line...
 		DPF( DEBUG_VI, "VI: Clearing interrupt flag. PC: 0x%08x", gCPUState.CurrentPC );
-		#endif
+#endif
 		Memory_MI_ClrRegisterBits(MI_INTR_REG, MI_INTR_VI);
 		R4300_Interrupt_UpdateCause3();
 		return;
 	}
-
+	
 	*(u32 *)((u8 *)g_pMemoryBuffers[MEM_VI_REG] + offset) = value;
 }
 #endif
@@ -421,14 +415,17 @@ static void WriteValue_9FC0_9FCF( u32 address, u32 value )
 
 static void WriteValue_FlashRam( u32 address, u32 value )
 {
-	u32 offset {address & 0xFF};
-	if (g_ROM.settings.SaveType == SAVE_TYPE_FLASH && offset == 0)
+	if (g_ROM.settings.SaveType == SAVE_TYPE_FLASH)
 	{
 		if ((address&0x1FFFFFFF) == FLASHRAM_WRITE_ADDR)
 		{
 			Flash_DoCommand( value );
 			return;
 		}
+	}
+	else
+	{
+		DAEDALUS_ERROR("ROM is accessing a Flashram region, but save type is not correct");
 	}
 	#ifdef DAEDALUS_DEBUG_CONSOLE
 	DBGConsole_Msg(0, "[GWrite to FlashRam (0x%08x) is invalid", address);
@@ -439,6 +436,7 @@ static void WriteValue_ROM( u32 address, u32 value )
 {
 	// Write to ROM support
 	// A Bug's Life and Toy Story 2 write to ROM, add support by storing written value which is used when reading from Rom.
+	// TODO: Make this more robust.. // Salvy
 	g_pWriteRom = value;
 	#ifdef DAEDALUS_DEBUG_CONSOLE
 	DBGConsole_Msg(0, "[YWarning : Wrote to ROM -> [0x%08x]", value);
